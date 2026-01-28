@@ -1,4 +1,5 @@
 import os
+from old.exemplo import plot
 import optuna
 from optuna.pruners import MedianPruner
 from dataset import Dataset
@@ -69,23 +70,11 @@ def optimize_hyperparameters(
     target_column='CKD progression',
     n_trials=50,
     study_name='frozen_optimization',
-    timestamp=None
+    timestamp=None,
+    directories=None
 ):
     dataset_path = f'datasets/dataset_filled_boruta_{dataset_name}'
-    results_dir = 'results'
-    os.makedirs(results_dir, exist_ok=True)
-
-    frozen_dir = os.path.join(results_dir, 'frozen')
-    os.makedirs(frozen_dir, exist_ok=True)
-
-    model_dir = os.path.join(frozen_dir, dataset_name.replace('.csv', ''))
-    os.makedirs(model_dir, exist_ok=True)
-
-    plot_dir = os.path.join(model_dir, 'plots')
-    os.makedirs(plot_dir, exist_ok=True)
-
-    study_dir = os.path.join(model_dir, 'studies')
-    os.makedirs(study_dir, exist_ok=True)
+    
 
     study = optuna.create_study(
         study_name=study_name,
@@ -108,14 +97,14 @@ def optimize_hyperparameters(
         print(f"  {key}: {value}")
     
     study_filename = f'{study_name}_{timestamp}.pkl'
-    joblib.dump(study, os.path.join(study_dir, study_filename))
-    print(f"Estudo salvo em: {os.path.join(study_dir, study_filename)}\n")
+    joblib.dump(study, os.path.join(directories['study_dir'], study_filename))
+    print(f"Estudo salvo em: {os.path.join(directories['study_dir'], study_filename)}\n")
     
     fig = optuna.visualization.matplotlib.plot_optimization_history(study)
-    plt.savefig(os.path.join(plot_dir, f'optuna_frozen_history_{timestamp}.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(directories['plot_dir'], f'optuna_frozen_history_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     fig = optuna.visualization.matplotlib.plot_param_importances(study)
-    plt.savefig(os.path.join(plot_dir, f'optuna_frozen_importance_{timestamp}.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(directories['plot_dir'], f'optuna_frozen_importance_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     return study
@@ -128,7 +117,7 @@ def train_with_best_params(
     timestamp=None,
     plot_path=None
 ):
-    plot_path = plot_path or f'best_frozen_{timestamp}.png'
+    plot_path = plot_path + f'/training_curves_frozen_{timestamp}.png'
     best_params = study.best_params
     
     pretrained_encoder = keras.models.load_model(encoder_path)
@@ -151,21 +140,12 @@ def train_with_best_params(
     
     return mlp
 
-def save_results(dataset_name='age_adults.csv', best_model=None, dataset=None, timestamp=None):
+def save_results(dataset_name='age_adults.csv', best_model=None, dataset=None, timestamp=None, directories=None):
     if best_model is None or dataset is None:
         print("Modelo ou dataset não fornecido para salvar os resultados.")
         return
     
-    results_dir = 'results'
-    os.makedirs(results_dir, exist_ok=True)
-
-    frozen_dir = os.path.join(results_dir, 'frozen')
-    os.makedirs(frozen_dir, exist_ok=True)
-    
-    model_dir = os.path.join(frozen_dir, dataset_name.replace('.csv', ''))
-    os.makedirs(model_dir, exist_ok=True)
-
-    model_path = os.path.join(model_dir, f'best_frozen_model_{dataset_name.replace(".csv", "")}_{timestamp}.keras')
+    model_path = os.path.join(directories['model_dir'], f'best_frozen_model_{dataset_name.replace(".csv", "")}_{timestamp}.keras')
 
     best_model.model.save(model_path)
 
@@ -173,7 +153,7 @@ def save_results(dataset_name='age_adults.csv', best_model=None, dataset=None, t
     y_pred_class = (y_pred > 0.5).astype(int).flatten()
     y_true = dataset.target_test.values
 
-    classification_report_path = os.path.join(model_dir, f'classification_report_{dataset_name.replace(".csv", "")}_{timestamp}.txt')
+    classification_report_path = os.path.join(directories['model_dir'], f'classification_report_{dataset_name.replace(".csv", "")}_{timestamp}.txt')
 
     class_report = classification_report(y_true, y_pred_class, digits=4)
     conf_matrix = confusion_matrix(y_true, y_pred_class)
@@ -195,48 +175,55 @@ def save_results(dataset_name='age_adults.csv', best_model=None, dataset=None, t
     print("CURVA ROC AUC DO MELHOR MODELO OTIMIZADO:\n")
     print(f"AUC-ROC: {auc_score:.4f}")
 
+def set_directories(dataset_name):
+    directories = {'results_dir': 'results',
+                   'frozen_dir': os.path.join('results', 'frozen'),
+                   'model_dir': os.path.join('results', 'frozen', dataset_name.replace('.csv', '')),
+                   'plot_dir': os.path.join('results', 'frozen', dataset_name.replace('.csv', ''), 'plots'),
+                   'study_dir': os.path.join('results', 'frozen', dataset_name.replace('.csv', ''), 'studies')}
+    
+    for dir_path in directories.values():
+        os.makedirs(dir_path, exist_ok=True)
+
+    return directories
+
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument('--dataset_name', type=str, default='age_adults.csv')
+    args.add_argument('--target_column', type=str, default='CKD progression')
     args.add_argument('--encoder_path', type=str, default='best_models_27_01_2026/best_pretrained_encoder.keras')
     args.add_argument('--n_trials', type=int, default=20)
     args.add_argument('--load_study', action='store_true')
-    args.add_argument('--study_path', type=str, default=None)
+    args.add_argument('--study_name', type=str, default=None)
     args = args.parse_args()
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-
-    results_dir = 'results'
-    frozen_dir = os.path.join(results_dir, 'frozen')
-    model_dir = os.path.join(frozen_dir, args.dataset_name.replace('.csv', ''))
-    plot_dir = os.path.join(model_dir, 'plots')
-    study_dir = os.path.join(model_dir, 'studies')
-    study_path = os.path.join(study_dir, f'frozen_optimization.pkl')
-
+    dataset = Dataset(f'datasets/dataset_filled_boruta_{args.dataset_name}', args.target_column)
+    directories = set_directories(args.dataset_name)
+    study_path = os.path.join(directories['study_dir'], args.study_name) if args.study_name else None
 
     if args.load_study:
-        
         study = joblib.load(study_path)
         print(f"Estudo carregado de: {study_path}")
     else:
         study = optimize_hyperparameters(
             dataset_name=args.dataset_name,
-            encoder_path='best_models_27_01_2026/best_pretrained_encoder.keras',
-            target_column='CKD progression',
+            encoder_path=args.encoder_path,
+            target_column=args.target_column,
             n_trials=args.n_trials,
             study_name='frozen_optimization',
-            timestamp=timestamp
+            timestamp=timestamp,
+            directories=directories
         )
 
-    dataset = Dataset(f'datasets/dataset_filled_boruta_{args.dataset_name}', 'CKD progression')
     
     best_model = train_with_best_params(
         study,
         dataset,
-        encoder_path='best_models_27_01_2026/best_pretrained_encoder.keras',
+        encoder_path=args.encoder_path,
         timestamp=timestamp,
-        plot_path=plot_dir
+        plot_path=directories['plot_dir']
     )
 
-    save_results(dataset_name=args.dataset_name, best_model=best_model, dataset=dataset, timestamp=timestamp)
+    save_results(dataset_name=args.dataset_name, best_model=best_model, dataset=dataset, timestamp=timestamp, directories=directories)
 
