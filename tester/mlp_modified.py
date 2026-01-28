@@ -93,9 +93,9 @@ class MLP:
             metrics=[
                 'accuracy',
                 keras.metrics.AUC(name='auc'),
-                keras.metrics.Recall(name='recall'),
-                keras.metrics.Precision(name='precision'),
-                keras.metrics.F1Score(name='f1-score', dtype=tf.float32)]       
+                keras.metrics.Recall(name='recall', thresholds=0.5),
+                keras.metrics.Precision(name='precision', thresholds=0.5),
+                keras.metrics.F1Score(name='f1-score', threshold=0.5, average='macro', dtype=tf.float32)]       
         )
 
     def summary(self):
