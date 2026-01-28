@@ -3,6 +3,7 @@ from tensorflow import keras
 import numpy as np
 from sklearn.metrics import mean_squared_error
 import pandas as pd
+import matplotlib.pyplot as plt
 
 class Autoencoder:
     def __init__(
@@ -169,7 +170,7 @@ class Autoencoder:
         return targets
     
 
-    def train(self, dataset, epochs=100, batch_size=32, verbose=1):
+    def train(self, dataset, epochs=100, batch_size=32, verbose=1, plot_path=None):
         train_array = dataset.features_train.values if hasattr(dataset.features_train, 'values') else dataset.features_train
         val_array = dataset.features_validation.values if hasattr(dataset.features_validation, 'values') else dataset.features_validation
         
@@ -234,7 +235,53 @@ class Autoencoder:
                         print(f"  - categorical {cat_idx} CE: {val_loss[idx]:.4f}")
                         idx += 1
         
+        if plot_path is not None:
+            self.plot_training_curves(plot_path=plot_path)
         return history.history
+    
+    def plot_training_curves(self, plot_path='training_curves.png'):
+        if self.history is None:
+            print("Nenhum histórico de treinamento disponível para plotar.")
+            return
+        
+        history = self.history
+        epochs = range(1, len(history['loss']) + 1)
+        
+        plt.figure(figsize=(12, 6))
+        
+        # Loss total
+        plt.subplot(1, 2, 1)
+        plt.plot(epochs, history['loss'], label='Train Loss')
+        plt.plot(epochs, history['val_loss'], label='Val Loss')
+        plt.title('Training and Validation Loss')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Métricas específicas
+        plt.subplot(1, 2, 2)
+        
+        metric_idx = 1
+        if self.continuous_indices:
+            plt.plot(epochs, history['continuous_reconstruction_mae'], label='Train Continuous MAE')
+            plt.plot(epochs, history['val_continuous_reconstruction_mae'], label='Val Continuous MAE')
+            metric_idx += 1
+        
+        if self.categorical_indices:
+            for cat_idx in self.categorical_indices:
+                plt.plot(epochs, history[f'categorical_{cat_idx}_reconstruction_accuracy'], label=f'Train Cat {cat_idx} Acc')
+                plt.plot(epochs, history[f'val_categorical_{cat_idx}_reconstruction_accuracy'], label=f'Val Cat {cat_idx} Acc')
+                metric_idx += 1
+        
+        plt.title('Training and Validation Metrics')
+        plt.xlabel('Epochs')
+        plt.ylabel('Metric Value')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
     
     def get_encoder(self):
         return self.encoder
