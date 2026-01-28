@@ -3,14 +3,16 @@ import optuna
 from optuna.pruners import MedianPruner
 from dataset import Dataset
 from mlp_modified import MLP
-from sklearn.metrics import f1_score, recall_score, roc_auc_score
+from sklearn.metrics import f1_score, roc_curve, auc, classification_report, confusion_matrix
 from tensorflow import keras
 import numpy as np
+from argparse import ArgumentParser
+import joblib
+import matplotlib.pyplot as plt
+from datetime import datetime
 
-
-def objective(trial, dataset_path, encoder_path, target_column='CKD progression'):
+def objective(trial, dataset_path, encoder_path, target_column):
     dataset = Dataset(dataset_path, target_column)
-    
     pretrained_encoder = keras.models.load_model(encoder_path)
     
     finetune_lr = trial.suggest_float('finetune_lr', 1e-6, 1e-3, log=True)
@@ -18,56 +20,23 @@ def objective(trial, dataset_path, encoder_path, target_column='CKD progression'
     finetune_epochs = trial.suggest_int('finetune_epochs', 50, 300, step=50)
     
     try:
-        mlp = MLP(
-            shape=dataset.get_shape(),
-            pretrained_encoder=pretrained_encoder,
-            freeze_encoder=True
-        )
-        
+        mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder, freeze_encoder=True)
         mlp.unfreeze_encoder(learning_rate=finetune_lr)
+        mlp.train(dataset, epochs=finetune_epochs, batch_size=batch_size, verbose=0, plot_path=None)
         
-        mlp.train(
-            dataset,
-            epochs=finetune_epochs,
-            batch_size=batch_size,
-            verbose=0,
-            plot_path=None
-        )
-        
-        y_pred = mlp.model.predict(dataset.features_validation, verbose=0)
-        y_pred_class = (y_pred > 0.5).astype(int).flatten()
-        y_true = dataset.target_validation.values
-
-        import numpy as np
-        print(f"Distribuição das predições: {np.unique(y_pred_class, return_counts=True)}")
-        print(f"Distribuição dos targets: {np.unique(y_true, return_counts=True)}")
-        recall = recall_score(y_true, y_pred_class)
-        print(f"Recall: {recall:.4f}")
-        
-        f1 = f1_score(y_true, y_pred_class)
-        print(f"F1-score: {f1:.4f}")
-        
-        trial.report(f1, step=0)
+        val_f1 = max(mlp.history['val_f1-score'])
         
         if trial.should_prune():
             raise optuna.TrialPruned()
         
-        return f1
-    
-    except Exception as e:
-        print(f"Erro no trial {trial.number}: {e}")
+        return val_f1
+    except Exception:
         return 0.0
 
 
-def optimize_hyperparameters(
-    dataset_path,
-    encoder_path='best_pretrained_encoder.keras',
-    target_column='CKD progression',
-    n_trials=50,
-    study_name='unfrozen_optimization'
-):
+def optimize_hyperparameters(dataset_path, encoder_path, target_column, n_trials, result_dir):
     study = optuna.create_study(
-        study_name=study_name,
+        study_name='unfrozen_optimization',
         direction='maximize',
         pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10)
     )
@@ -78,88 +47,73 @@ def optimize_hyperparameters(
         show_progress_bar=True
     )
     
-    print("OTIMIZAÇÃO CONCLUÍDA")
-    print(f"Número de trials concluídos: {len(study.trials)}\n")
-    print(f"Melhor F1-score: {study.best_value:.4f}")
-    
-    print("Melhores hiperparâmetros:\n")
-    for key, value in study.best_params.items():
-        print(f"  {key}: {value}")
-    
-    import joblib
-    joblib.dump(study, f'{study_name}.pkl')
-    print(f"Estudo salvo em: {study_name}.pkl\n")
-    
-    import matplotlib.pyplot as plt
+    joblib.dump(study, os.path.join(result_dir, 'study.pkl'))
     
     fig = optuna.visualization.matplotlib.plot_optimization_history(study)
-    plt.savefig('plot/optuna_unfrozen_history.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'optimization_history.png'), dpi=300, bbox_inches='tight')
+    plt.close()
     
     fig = optuna.visualization.matplotlib.plot_param_importances(study)
-    plt.savefig('plot/optuna_unfrozen_importance.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'param_importance.png'), dpi=300, bbox_inches='tight')
+    plt.close()
     
     return study
 
 
-def train_with_best_params(
-    study,
-    dataset,
-    encoder_path='best_pretrained_encoder.keras',
-):
+def train_and_evaluate(study, dataset, encoder_path, result_dir):
     best_params = study.best_params
-    
     pretrained_encoder = keras.models.load_model(encoder_path)
     
-    mlp = MLP(
-        shape=dataset.get_shape(),
-        pretrained_encoder=pretrained_encoder,
-        freeze_encoder=False
-    )
-    
+    mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder, freeze_encoder=True)
     mlp.unfreeze_encoder(learning_rate=best_params['finetune_lr'])
-    
     mlp.train(
         dataset,
         epochs=best_params['finetune_epochs'],
         batch_size=best_params['batch_size'],
         verbose=1,
-        plot_path="best_unfrozen"
+        plot_path=os.path.join(result_dir, 'training_curves.png')
     )
+    
+    mlp.model.save(os.path.join(result_dir, 'best_model.keras'))
+    
+    y_pred = mlp.model.predict(dataset.features_test)
+    y_pred_class = (y_pred > 0.5).astype(int).flatten()
+    y_true = dataset.target_test.values
+    
+    class_report = classification_report(y_true, y_pred_class, digits=4)
+    conf_matrix = confusion_matrix(y_true, y_pred_class)
+    fpr, tpr, thresholds = roc_curve(y_true, y_pred)
+    auc_score = auc(fpr, tpr)
+    
+    with open(os.path.join(result_dir, 'classification_report.txt'), 'w') as f:
+        f.write(class_report)
+        f.write("\nMatriz de Confusão:\n")
+        f.write(np.array2string(conf_matrix))
+        f.write(f"\nAUC-ROC: {auc_score:.4f}\n")
     
     return mlp
 
-
 if __name__ == "__main__":
-    study = optimize_hyperparameters(
-        dataset_path='datasets/dataset_filled_boruta_age_adults.csv',
-        encoder_path='best_pretrained_encoder.keras',
-        target_column='CKD progression',
-        n_trials=20,
-        study_name='unfrozen_optimization'
-    )
+    args = ArgumentParser()
+    args.add_argument('--dataset_name', type=str, default='age_adults.csv', help='File name of the dataset (e.g., age_adults.csv)')
+    args.add_argument('--encoder_path', type=str, default='best_models_27_01_2026/best_pretrained_encoder.keras', help='Path to the pretrained encoder model')
+    args.add_argument('--target_column', type=str, default='CKD progression', help='Name of the target column in the dataset')
+    args.add_argument('--n_trials', type=int, default=20, help='NNumber of trials for optimization')
+    args.add_argument('--load_study', action='store_true', help='Load existing study')
+    args.add_argument('--study_path', type=str, default='', help='Path to the saved study')
+    args = args.parse_args()
 
-    dataset = Dataset('datasets/dataset_filled_boruta_age_adults.csv', 'CKD progression')
-
-    # import joblib
-    # study = joblib.load('unfrozen_optimization.pkl')
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    dataset_base = args.dataset_name.replace('.csv', '')
+    result_dir = os.path.join('results', 'unfrozen', f'{dataset_base}_{timestamp}')
+    os.makedirs(result_dir, exist_ok=True)
     
-    best_model = train_with_best_params(
-        study,
-        dataset,
-        encoder_path='best_pretrained_encoder.keras',
-    )
+    dataset_path = f'datasets/dataset_filled_boruta_{args.dataset_name}'
+    dataset = Dataset(dataset_path, args.target_column)
 
-    from sklearn.metrics import classification_report, confusion_matrix
+    if args.load_study:
+        study = joblib.load(args.study_path)
+    else:
+        study = optimize_hyperparameters(dataset_path, args.encoder_path, args.target_column, args.n_trials, result_dir)
 
-    y_pred = best_model.model.predict(dataset.features_test)
-    y_pred_class = (y_pred > 0.5).astype(int).flatten()
-    y_true = dataset.target_test.values
-    print("RELATÓRIO DE CLASSIFICAÇÃO DO MELHOR MODELO OTIMIZADO:\n")
-    print(classification_report(y_true, y_pred_class, digits=4))
-    print("MATRIZ DE CONFUSÃO DO MELHOR MODELO OTIMIZADO:\n")
-    print(confusion_matrix(y_true, y_pred_class))
-    print("CURVA ROC AUC DO MELHOR MODELO OTIMIZADO:\n")
-    from sklearn.metrics import roc_curve, auc
-    fpr, tpr, thresholds = roc_curve(y_true, y_pred)
-    auc_score = auc(fpr, tpr)
-    print(f"AUC-ROC: {auc_score:.4f}")
+    train_and_evaluate(study, dataset, args.encoder_path, result_dir)
