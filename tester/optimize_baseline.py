@@ -81,6 +81,10 @@ def train_and_evaluate(study, dataset, result_dir):
     conf_matrix = confusion_matrix(y_true, y_pred_class)
     fpr, tpr, thresholds = roc_curve(y_true, y_pred)
     auc_score = auc(fpr, tpr)
+
+    with open(os.path.join(result_dir, 'best_hyperparameters.txt'), 'w') as f:
+        for key, value in best_params.items():
+            f.write(f"{key}: {value}\n")
     
     with open(os.path.join(result_dir, 'classification_report.txt'), 'w') as f:
         f.write(class_report)

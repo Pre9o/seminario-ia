@@ -209,3 +209,5 @@ __marimo__/
 *.pkl
 *.keras
 tester/pretrained_encoder.keras
+*.png
+*.txt 
