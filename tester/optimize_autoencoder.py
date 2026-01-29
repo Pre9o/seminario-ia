@@ -42,8 +42,8 @@ def objective(trial, dataset_path, target_column):
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
     pretrain_epochs = trial.suggest_int('pretrain_epochs', 50, 300, step=50)
     
-    categorical_indices = [4, 5]
-    categorical_cardinalities = {4: 4, 5: 2}
+    categorical_indices = [2, 5]
+    categorical_cardinalities = {2: 4, 5: 2}
     
     try:
         autoencoder = Autoencoder(
@@ -100,8 +100,8 @@ def train_and_evaluate(study, dataset, result_dir):
     n_layers = best_params['n_layers']
     hidden_units = [best_params[f'units_layer_{i}'] for i in range(n_layers)]
     
-    categorical_indices = [4, 5]
-    categorical_cardinalities = {4: 4, 5: 2}
+    categorical_indices = [2, 5]
+    categorical_cardinalities = {2: 4, 5: 2}
     
     autoencoder = Autoencoder(
         shape=dataset.get_shape(),
@@ -122,6 +122,47 @@ def train_and_evaluate(study, dataset, result_dir):
     )
     
     autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))
+    
+    test_array = dataset.features_test.values if hasattr(dataset.features_test, 'values') else dataset.features_test
+    X_test_masked, _ = autoencoder.create_masked_data(test_array)
+    y_test_targets = autoencoder.prepare_targets(test_array)
+    
+    predictions = autoencoder.model.predict(X_test_masked, verbose=0)
+    
+    results = {}
+    
+    if autoencoder.continuous_indices:
+        continuous_pred = predictions[0]
+        continuous_true = y_test_targets[0]
+        mse = np.mean((continuous_pred - continuous_true) ** 2)
+        mae = np.mean(np.abs(continuous_pred - continuous_true))
+        results['continuous_mse'] = float(mse)
+        results['continuous_mae'] = float(mae)
+    
+    if autoencoder.categorical_indices:
+        offset = 1 if autoencoder.continuous_indices else 0
+        for i, cat_idx in enumerate(autoencoder.categorical_indices):
+            cat_pred = predictions[offset + i]
+            cat_true = y_test_targets[offset + i]
+            
+            cat_pred_class = np.argmax(cat_pred, axis=1)
+            accuracy = np.mean(cat_pred_class == cat_true)
+            
+            cat_true_one_hot = np.zeros_like(cat_pred)
+            cat_true_one_hot[np.arange(len(cat_true)), cat_true.astype(int)] = 1
+            ce_loss = -np.mean(np.sum(cat_true_one_hot * np.log(cat_pred + 1e-10), axis=1))
+            
+            results[f'categorical_{cat_idx}_accuracy'] = float(accuracy)
+            results[f'categorical_{cat_idx}_ce_loss'] = float(ce_loss)
+
+    with open(os.path.join(result_dir, 'best_hyperparameters.txt'), 'w') as f:
+        for key, value in best_params.items():
+            f.write(f"{key}: {value}\n")
+    
+    with open(os.path.join(result_dir, 'reconstruction_metrics.txt'), 'w') as f:
+        f.write("Métricas de Reconstrução no Conjunto de Teste:\n\n")
+        for key, value in results.items():
+            f.write(f"{key}: {value:.4f}\n")
     
     return autoencoder
 
