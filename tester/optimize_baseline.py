@@ -3,12 +3,29 @@ import optuna
 from optuna.pruners import MedianPruner
 from dataset import Dataset
 from mlp_modified import MLP
-from sklearn.metrics import f1_score, roc_curve, auc, classification_report, confusion_matrix
+from sklearn.metrics import roc_curve, auc, classification_report, confusion_matrix, brier_score_loss
 import numpy as np
 from argparse import ArgumentParser
 import joblib
 import matplotlib.pyplot as plt
 from datetime import datetime
+
+def calculate_ece(y_true, y_pred_proba, n_bins=10):
+    bin_boundaries = np.linspace(0, 1, n_bins + 1)
+    bin_lowers = bin_boundaries[:-1]
+    bin_uppers = bin_boundaries[1:]
+    
+    ece = 0.0
+    for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
+        in_bin = (y_pred_proba > bin_lower) & (y_pred_proba <= bin_upper)
+        prop_in_bin = np.mean(in_bin)
+        
+        if prop_in_bin > 0:
+            accuracy_in_bin = np.mean(y_true[in_bin] == (y_pred_proba[in_bin] > 0.5).astype(int))
+            avg_confidence_in_bin = np.mean(y_pred_proba[in_bin])
+            ece += np.abs(accuracy_in_bin - avg_confidence_in_bin) * prop_in_bin
+    
+    return ece
 
 def objective(trial, dataset_path, target_column):
     dataset = Dataset(dataset_path, target_column)
@@ -74,14 +91,17 @@ def train_and_evaluate(study, dataset, result_dir):
     mlp.model.save(os.path.join(result_dir, 'best_model.keras'))
     
     y_pred = mlp.model.predict(dataset.features_test)
-    y_pred_class = (y_pred > 0.5).astype(int).flatten()
+    y_pred_proba = y_pred.flatten()
+    y_pred_class = (y_pred_proba > 0.5).astype(int)
     y_true = dataset.target_test.values
     
     class_report = classification_report(y_true, y_pred_class, digits=4)
     conf_matrix = confusion_matrix(y_true, y_pred_class)
-    fpr, tpr, thresholds = roc_curve(y_true, y_pred)
+    fpr, tpr, thresholds = roc_curve(y_true, y_pred_proba)
     auc_score = auc(fpr, tpr)
-
+    brier_score = brier_score_loss(y_true, y_pred_proba)
+    ece = calculate_ece(y_true, y_pred_proba, n_bins=10)
+    
     with open(os.path.join(result_dir, 'best_hyperparameters.txt'), 'w') as f:
         for key, value in best_params.items():
             f.write(f"{key}: {value}\n")
@@ -91,6 +111,8 @@ def train_and_evaluate(study, dataset, result_dir):
         f.write("\nMatriz de Confusão:\n")
         f.write(np.array2string(conf_matrix))
         f.write(f"\nAUC-ROC: {auc_score:.4f}\n")
+        f.write(f"Brier Score: {brier_score:.4f}\n")
+        f.write(f"ECE: {ece:.4f}\n")
     
     return mlp
 
