@@ -211,3 +211,4 @@ __marimo__/
 tester/pretrained_encoder.keras
 *.png
 *.txt 
+*Zone.Identifier
