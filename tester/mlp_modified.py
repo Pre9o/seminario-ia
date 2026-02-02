@@ -5,6 +5,7 @@ from tensorflow.keras import regularizers
 from tensorflow.keras.callbacks import EarlyStopping
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.metrics import classification_report   
 
 HIDDEN_LAYERS=[
     128,
@@ -85,17 +86,17 @@ class MLP:
 
     def compile(self, loss=LOSS, learning_rate=LEARNING_RATE, weight_decay=WEIGHT_DECAY):
         self.model.compile(
-            loss=loss,      # Ideal para classificação binária
+            loss=loss,
             optimizer=keras.optimizers.AdamW(
-                learning_rate=learning_rate, # You can tune the learning rate
-                weight_decay=weight_decay   # A common starting point for weight decay
-            ), # Otimizador popular e eficiente
+                learning_rate=learning_rate,
+                weight_decay=weight_decay
+            ),
             metrics=[
                 'accuracy',
                 keras.metrics.AUC(name='auc'),
                 keras.metrics.Recall(name='recall', thresholds=0.5),
                 keras.metrics.Precision(name='precision', thresholds=0.5),
-                keras.metrics.F1Score(name='f1-score', threshold=0.5, average='macro', dtype=tf.float32)]       
+                keras.metrics.F1Score(name='f1-score', threshold=0.5, dtype=tf.float32)]       
         )
 
     def summary(self):
@@ -111,7 +112,7 @@ class MLP:
     ):
         early_stopping = EarlyStopping(
             monitor='val_loss',
-            patience=10,
+            patience=30,
             restore_best_weights=True
         )
 

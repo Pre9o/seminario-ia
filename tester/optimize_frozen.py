@@ -34,7 +34,7 @@ def objective(trial, dataset_path, encoder_path, target_column):
     
     finetune_lr = trial.suggest_float('finetune_lr', 1e-5, 1e-3, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
-    finetune_epochs = trial.suggest_int('finetune_epochs', 50, 300, step=50)
+    finetune_epochs = trial.suggest_int('finetune_epochs', 50, 500, step=50)
     
     try:
         mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder, freeze_encoder=True)
@@ -99,7 +99,7 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir):
     
     y_pred = mlp.model.predict(dataset.features_test)
     y_pred_proba = y_pred.flatten()
-    y_pred_class = (y_pred_proba > 0.5).astype(int).flatten()
+    y_pred_class = (y_pred_proba > 0.5).astype(int)
     y_true = dataset.target_test.values
     
     class_report = classification_report(y_true, y_pred_class, digits=4)

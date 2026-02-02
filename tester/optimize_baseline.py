@@ -32,7 +32,7 @@ def objective(trial, dataset_path, target_column):
     
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
-    epochs = trial.suggest_int('epochs', 50, 300, step=50)
+    epochs = trial.suggest_int('epochs', 50, 500, step=50)
     
     try:
         mlp = MLP(shape=dataset.get_shape())

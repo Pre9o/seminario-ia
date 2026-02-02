@@ -1,7 +1,6 @@
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
-from sklearn.metrics import mean_squared_error
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -190,7 +189,7 @@ class Autoencoder:
         # callbacks
         early_stopping = keras.callbacks.EarlyStopping(
             monitor='val_loss',
-            patience=20,
+            patience=10,
             restore_best_weights=True,
             verbose=1
         )
@@ -249,7 +248,6 @@ class Autoencoder:
         
         plt.figure(figsize=(12, 6))
         
-        # Loss total
         plt.subplot(1, 2, 1)
         plt.plot(epochs, history['loss'], label='Train Loss')
         plt.plot(epochs, history['val_loss'], label='Val Loss')
@@ -259,7 +257,6 @@ class Autoencoder:
         plt.legend()
         plt.grid(True, alpha=0.3)
         
-        # Métricas específicas
         plt.subplot(1, 2, 2)
         
         metric_idx = 1

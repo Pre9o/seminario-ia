@@ -34,7 +34,7 @@ def objective(trial, dataset_path, encoder_path, target_column):
     
     finetune_lr = trial.suggest_float('finetune_lr', 1e-6, 1e-3, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
-    finetune_epochs = trial.suggest_int('finetune_epochs', 50, 300, step=50)
+    finetune_epochs = trial.suggest_int('finetune_epochs', 50, 500, step=50)
     
     try:
         mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder, freeze_encoder=True)

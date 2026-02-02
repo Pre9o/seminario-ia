@@ -39,11 +39,11 @@ def objective(trial, dataset_path, target_column):
     
     mask_ratio = trial.suggest_float('mask_ratio', 0.1, 0.5)
     pretrain_lr = trial.suggest_float('pretrain_lr', 1e-4, 1e-2, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
+    batch_size = trial.suggest_categorical('batch_size', [4, 8, 16, 32, 64])
     pretrain_epochs = trial.suggest_int('pretrain_epochs', 50, 300, step=50)
     
-    categorical_indices = [2, 5]
-    categorical_cardinalities = {2: 4, 5: 2}
+    categorical_indices = [1, 5, 6]
+    categorical_cardinalities = {1: 4, 5: 4, 6: 2}
     
     try:
         autoencoder = Autoencoder(
@@ -100,8 +100,8 @@ def train_and_evaluate(study, dataset, result_dir):
     n_layers = best_params['n_layers']
     hidden_units = [best_params[f'units_layer_{i}'] for i in range(n_layers)]
     
-    categorical_indices = [2, 5]
-    categorical_cardinalities = {2: 4, 5: 2}
+    categorical_indices = [1, 5, 6]
+    categorical_cardinalities = {1: 4, 5: 4, 6: 2}
     
     autoencoder = Autoencoder(
         shape=dataset.get_shape(),
