@@ -37,7 +37,7 @@ def objective(trial, dataset_path, encoder_path, target_column):
     finetune_epochs = trial.suggest_int('finetune_epochs', 50, 500, step=50)
     
     try:
-        mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder, freeze_encoder=True)
+        mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder)
         mlp.unfreeze_encoder(learning_rate=finetune_lr)
         mlp.train(dataset, epochs=finetune_epochs, batch_size=batch_size, verbose=0, plot_path=None)
         
@@ -81,7 +81,7 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir):
     best_params = study.best_params
     pretrained_encoder = keras.models.load_model(encoder_path)
     
-    mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder, freeze_encoder=True)
+    mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder)
     mlp.unfreeze_encoder(learning_rate=best_params['finetune_lr'])
     mlp.train(
         dataset,

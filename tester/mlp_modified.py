@@ -46,8 +46,27 @@ WEIGHT_DECAY=0.000
 ACTIVATION='relu'
 LOSS='binary_crossentropy'
 
+class MacroF1Callback(keras.callbacks.Callback):
+    def __init__(self, validation_data):
+        super().__init__()
+        self.validation_data = validation_data
+        self.val_f1_macro = []
+    
+    def on_epoch_end(self, epoch, logs=None):
+        X_val, y_val = self.validation_data
+        y_pred_proba = self.model.predict(X_val, verbose=0)
+        y_pred = (y_pred_proba > 0.5).astype(int).flatten()
+        y_true = y_val.values if hasattr(y_val, 'values') else y_val
+        
+        f1_macro = f1_score(y_true, y_pred, average='macro', zero_division=0)
+        self.val_f1_macro.append(f1_macro)
+        logs['val_f1_macro'] = f1_macro
+        
+        if epoch % 10 == 0 or epoch < 5:
+            print(f" - val_f1_macro: {f1_macro:.4f}", end='')
+
 class MLP:
-    def __init__(self, shape, layers=HIDDEN_LAYERS, activation=ACTIVATION, pretrained_encoder=None, freeze_encoder=None):
+    def __init__(self, shape, layers=HIDDEN_LAYERS, activation=ACTIVATION, pretrained_encoder=None):
         self.model = keras.models.Sequential()
         self.shape = shape
         
@@ -69,9 +88,6 @@ class MLP:
                     )
                 )
                 self.model.add(keras.layers.Dropout(DROPOUTS[idx], name=f'dropout_{idx+1}'))
-
-        if freeze_encoder:
-            self.model.add(keras.layers.Dense(32, activation=activation, name='camada_intermediaria'))
 
         self.model.add(keras.layers.Dense(1, activation='sigmoid', name='camada_saida_sigmoid'))
         self.compile()
@@ -112,8 +128,12 @@ class MLP:
     ):
         early_stopping = EarlyStopping(
             monitor='val_loss',
-            patience=30,
+            patience=10,
             restore_best_weights=True
+        )
+
+        macro_f1_callback = MacroF1Callback(
+            validation_data=(dataset.features_validation, dataset.target_validation)
         )
 
         y_train = dataset.target_train.astype('float32')
@@ -124,12 +144,14 @@ class MLP:
             y_train,
             epochs=epochs, 
             validation_data=(dataset.features_validation, y_val),
-            callbacks=[early_stopping],
+            callbacks=[macro_f1_callback, early_stopping],
             batch_size=batch_size,
             verbose=verbose 
         )
 
         self.history = history.history 
+        self.history['val_f1_macro'] = macro_f1_callback.val_f1_macro
+
         self.plot_training_curves(plot_path)
         actual_epochs = len(history.history['loss'])
         print(f"\nTreinamento interrompido na época: {actual_epochs}")
@@ -148,6 +170,8 @@ class MLP:
         val_recall = extract_value(history.history['val_recall'][-1])
         train_f1_score = extract_value(history.history['f1-score'][-1])
         val_f1_score = extract_value(history.history['val_f1-score'][-1])
+        train_f1_macro = extract_value(history.history['val_f1_macro'][-1])
+        val_f1_macro = extract_value(history.history['val_f1_macro'][-1])
         train_auc = extract_value(history.history['auc'][-1])
         val_auc = extract_value(history.history['val_auc'][-1])
         
