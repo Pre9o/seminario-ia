@@ -10,7 +10,7 @@ import joblib
 import matplotlib.pyplot as plt
 
 
-def objective(trial, dataset_path, target_column):
+def objective(trial, dataset_path, target_column, categorical_indices, categorical_cardinalities):
     dataset = Dataset(dataset_path, target_column)
     
     n_layers = trial.suggest_int('n_layers', 2, 4)
@@ -42,8 +42,6 @@ def objective(trial, dataset_path, target_column):
     batch_size = trial.suggest_categorical('batch_size', [4, 8, 16, 32, 64])
     pretrain_epochs = trial.suggest_int('pretrain_epochs', 50, 300, step=50)
     
-    categorical_indices = [2, 6]
-    categorical_cardinalities = {2: 4, 6: 2}
     
     try:
         autoencoder = Autoencoder(
@@ -68,7 +66,7 @@ def objective(trial, dataset_path, target_column):
         return float('inf')  
 
 
-def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
+def optimize_hyperparameters(dataset_path, target_column, categorical_indices, categorical_cardinalities, n_trials, result_dir):
     study = optuna.create_study(
         study_name='autoencoder_optimization',
         direction='minimize',
@@ -76,7 +74,7 @@ def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
     )
     
     study.optimize(
-        lambda trial: objective(trial, dataset_path, target_column),
+        lambda trial: objective(trial, dataset_path, target_column, categorical_indices, categorical_cardinalities),
         n_trials=n_trials,
         show_progress_bar=True
     )
@@ -94,14 +92,11 @@ def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
     return study
 
 
-def train_and_evaluate(study, dataset, result_dir):
+def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinalities, result_dir):
     best_params = study.best_params
     
     n_layers = best_params['n_layers']
     hidden_units = [best_params[f'units_layer_{i}'] for i in range(n_layers)]
-    
-    categorical_indices = [2, 6]
-    categorical_cardinalities = {2: 4, 6: 2}
     
     autoencoder = Autoencoder(
         shape=dataset.get_shape(),
@@ -183,11 +178,19 @@ if __name__ == "__main__":
     dataset_path = f'datasets/dataset_filled_boruta_{args.dataset_name}'
     dataset = Dataset(dataset_path, args.target_column)
 
-    print(f"DATASET SHAPE: {dataset.get_shape()}")
+    if args.dataset_name == 'age_elderly.csv':
+        categorical_indices = [1, 5, 6]
+        categorical_cardinalities = {1: 4, 5: 4, 6: 2}
+    elif args.dataset_name == 'etiology12.csv':
+        categorical_indices = [5, 6]
+        categorical_cardinalities = {5: 4, 6: 2}
+    else:
+        categorical_indices = [2, 6]
+        categorical_cardinalities = {2: 4, 6: 2}
 
     if args.load_study:
         study = joblib.load(args.study_path)
     else:
-        study = optimize_hyperparameters(dataset_path, args.target_column, args.n_trials, result_dir)
+        study = optimize_hyperparameters(dataset_path, args.target_column, categorical_indices, categorical_cardinalities, args.n_trials, result_dir)
 
-    train_and_evaluate(study, dataset, result_dir)
+    train_and_evaluate(study, dataset, categorical_indices, categorical_cardinalities, result_dir)

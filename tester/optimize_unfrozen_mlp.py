@@ -59,13 +59,13 @@ def objective(trial, dataset_path, encoder_path, target_column):
     dataset = Dataset(dataset_path, target_column)
     pretrained_encoder = keras.models.load_model(encoder_path)
     
-    finetune_lr = trial.suggest_float('finetune_lr', 1e-5, 1e-3, log=True)
+    finetune_lr = trial.suggest_float('finetune_lr', 1e-6, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
     finetune_epochs = trial.suggest_int('finetune_epochs', 50, 500, step=50)
     
     try:
         mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder)
-        mlp.compile(learning_rate=finetune_lr)
+        mlp.unfreeze_encoder(learning_rate=finetune_lr)
         class_weight = compute_class_weight(dataset.target_train.values)
         mlp.train(dataset, epochs=finetune_epochs, batch_size=batch_size, verbose=0, plot_path=None, class_weight=class_weight)
 
@@ -77,17 +77,13 @@ def objective(trial, dataset_path, encoder_path, target_column):
             raise optuna.TrialPruned()
         
         return val_f1
-    
     except Exception as e:
-        print(f"ERRO no trial {trial.number}: {e}")
-        import traceback
-        traceback.print_exc()
         return 0.0
 
 
 def optimize_hyperparameters(dataset_path, encoder_path, target_column, n_trials, result_dir):
     study = optuna.create_study(
-        study_name='frozen_optimization',
+        study_name='unfrozen_optimization',
         direction='maximize',
         pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10)
     )
@@ -116,7 +112,7 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir):
     pretrained_encoder = keras.models.load_model(encoder_path)
     
     mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder)
-    mlp.compile(learning_rate=best_params['finetune_lr'])
+    mlp.unfreeze_encoder(learning_rate=best_params['finetune_lr'])
     class_weight = compute_class_weight(dataset.target_train.values)
     mlp.train(
         dataset,
@@ -134,7 +130,7 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir):
     best_threshold, best_val_f1 = find_best_threshold(y_val_true, y_val_proba)
 
     y_pred_proba = mlp.model.predict(dataset.features_test, verbose=0).flatten()
-    y_pred_class = (y_pred_proba >= best_threshold).astype(int)
+    y_pred_class = (y_pred_proba >= best_threshold).astype(int).flatten()
     y_true = dataset.target_test.values
     
     class_report = classification_report(y_true, y_pred_class, digits=4)
@@ -159,6 +155,7 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir):
         f.write(f"\nAUC-ROC: {auc_score:.4f}\n")
         f.write(f"Brier Score: {brier_score:.4f}\n")
         f.write(f"ECE: {ece:.4f}\n")
+    
     return mlp
 
 if __name__ == "__main__":
@@ -173,7 +170,7 @@ if __name__ == "__main__":
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     dataset_base = args.dataset_name.replace('.csv', '')
-    result_dir = os.path.join('results', 'frozen', f'{dataset_base}_{timestamp}')
+    result_dir = os.path.join('results', 'unfrozen', f'{dataset_base}_{timestamp}')
     os.makedirs(result_dir, exist_ok=True)
     
     dataset_path = f'datasets/dataset_filled_boruta_{args.dataset_name}'
@@ -185,4 +182,3 @@ if __name__ == "__main__":
         study = optimize_hyperparameters(dataset_path, args.encoder_path, args.target_column, args.n_trials, result_dir)
 
     train_and_evaluate(study, dataset, args.encoder_path, result_dir)
-    
