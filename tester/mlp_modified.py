@@ -95,8 +95,11 @@ class MLP:
     
     def unfreeze_encoder(self, learning_rate=0.0001):
         for layer in self.model.layers:
-            if 'encoder' in layer.name:
+            if layer.name == 'encoder':
                 layer.trainable = True
+                if hasattr(layer, "layers"):
+                    for sublayer in layer.layers:
+                        sublayer.trainable = True
         self.compile(learning_rate=learning_rate)
     
 
@@ -124,7 +127,8 @@ class MLP:
         epochs=5000,
         batch_size=32,
         verbose=0,
-        plot_path=None
+        plot_path=None,
+        class_weight=None
     ):
         early_stopping = EarlyStopping(
             monitor='val_loss',
@@ -146,7 +150,8 @@ class MLP:
             validation_data=(dataset.features_validation, y_val),
             callbacks=[macro_f1_callback, early_stopping],
             batch_size=batch_size,
-            verbose=verbose 
+            verbose=verbose,
+            class_weight=class_weight
         )
 
         self.history = history.history 
