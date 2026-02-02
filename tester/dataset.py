@@ -12,7 +12,6 @@ class Dataset:
     def __init__(self, file_name, target_column=None):
         # load file to dataset
         self.ds = pd.read_csv(file_name)
-        self.ds.drop(columns='eGFR', inplace=True, errors='ignore')  # drop column if exists
         self.target_column = target_column
 
         for col_index in range(self.ds.shape[1]):
@@ -22,7 +21,7 @@ class Dataset:
                 continue
             
             unique_values = self.ds.iloc[:, col_index].nunique()
-            if unique_values <= 10:
+            if unique_values <= 5:
                 # categorical feature - não normaliza
                 continue
             else:
@@ -37,11 +36,6 @@ class Dataset:
             # split into train and test sets
             # by default with test_size=0.2
             self.split(0.6, 0.2, 0.2)
-
-    def count_unique_values(self, column_index):
-        column_name = self.features.columns[column_index]
-        unique_values = self.features[column_name].nunique()
-        return unique_values
 
     def setTargetColumn(self, target_column):
         self.target_column = target_column  
