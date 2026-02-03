@@ -207,6 +207,7 @@ if __name__ == "__main__":
     args.add_argument('--n_trials', type=int, default=20, help='NNumber of trials for optimization')
     args.add_argument('--load_study', action='store_true', help='Load existing study')
     args.add_argument('--study_path', type=str, default='', help='Path to the saved study')
+    args.add_argument('--n_runs', type=int, default=20, help='Number of runs for evaluation')
     args = args.parse_args()
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -222,4 +223,4 @@ if __name__ == "__main__":
     else:
         study = optimize_hyperparameters(dataset_path, args.encoder_path, args.target_column, args.n_trials, result_dir)
 
-    train_and_evaluate(study, dataset, args.encoder_path, result_dir)
+    train_and_evaluate(study, dataset, args.encoder_path, result_dir, args.n_runs)

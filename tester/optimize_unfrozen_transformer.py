@@ -158,7 +158,7 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
             epochs=best_params['finetune_epochs'],
             batch_size=best_params['batch_size'],
             verbose=1,
-            plot_path=os.path.join(result_dir, 'training_curves.png'),
+            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx + 1}.png'),
             class_weight=class_weight,
         )
         
@@ -222,8 +222,8 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
         f.write("Métricas de Classificação no Conjunto de Teste (média):\n\n")
         f.write(f"n_runs: {n_runs}\n\n")
         for key in metric_keys:
-            f.write(f"{key}_mean: {mean_results[key]:.6f}\n")
-            f.write(f"{key}_std: {std_results[key]:.6f}\n")
+            f.write(f"{key}_mean: {mean_results[key]:.4f}\n")
+            f.write(f"{key}_std: {std_results[key]:.4f}\n")
 
 
 if __name__ == "__main__":
@@ -234,6 +234,7 @@ if __name__ == "__main__":
     args.add_argument('--n_trials', type=int, default=20, help='Number of trials for optimization')
     args.add_argument('--load_study', action='store_true', help='Load existing study')
     args.add_argument('--study_path', type=str, default='', help='Path to the saved study')
+    args.add_argument('--n_runs', type=int, default=20, help='Number of runs for evaluation')
     args = args.parse_args()
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -249,5 +250,5 @@ if __name__ == "__main__":
     else:
         study = optimize_hyperparameters(dataset_path, args.encoder_path, args.target_column, args.n_trials, result_dir)
 
-    train_and_evaluate(study, dataset, args.encoder_path, result_dir)
+    train_and_evaluate(study, dataset, args.encoder_path, result_dir, args.n_runs)
     

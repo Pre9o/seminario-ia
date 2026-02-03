@@ -199,8 +199,8 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs=20):
         f.write("Métricas de Classificação no Conjunto de Teste (média):\n\n")
         f.write(f"n_runs: {n_runs}\n\n")
         for key in metric_keys:
-            f.write(f"{key}_mean: {mean_results[key]:.6f}\n")
-            f.write(f"{key}_std: {std_results[key]:.6f}\n")
+            f.write(f"{key}_mean: {mean_results[key]:.4f}\n")
+            f.write(f"{key}_std: {std_results[key]:.4f}\n")
 
 
 if __name__ == "__main__":
