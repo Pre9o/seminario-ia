@@ -182,8 +182,6 @@ def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinal
             f.write(f"{key}_mean: {mean_results[key]:.6f}\n")
             f.write(f"{key}_std: {std_results[key]:.6f}\n")
 
-    return autoencoder
-
 
 if __name__ == '__main__':
     args = ArgumentParser()
