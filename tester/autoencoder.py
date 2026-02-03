@@ -27,6 +27,8 @@ class Autoencoder:
         self.categorical_indices = categorical_indices if categorical_indices else []
         self.categorical_cardinalities = categorical_cardinalities if categorical_cardinalities else {}
         self.continuous_indices = [i for i in range(shape) if i not in self.categorical_indices]
+
+        self.categorical_offsets = {}
         
         
         self.encoder = self._build_encoder()
@@ -160,10 +162,26 @@ class Autoencoder:
         
         if self.categorical_indices:
             for cat_idx in self.categorical_indices:
-                cat_targets = data_array[:, cat_idx].astype(int)
-                
-                cat_targets = cat_targets - cat_targets.min()
-                
+                raw = data_array[:, cat_idx]
+                raw = raw.astype(float)
+
+                offset = self.categorical_offsets.get(cat_idx)
+                if offset is None:
+                    offset = int(np.nanmin(raw))
+                    self.categorical_offsets[cat_idx] = offset
+
+                cat_targets = raw - float(offset)
+                cat_targets = cat_targets.astype(int)
+
+                n_classes = int(self.categorical_cardinalities.get(cat_idx, 2))
+                min_label = int(np.min(cat_targets)) if len(cat_targets) else 0
+                max_label = int(np.max(cat_targets)) if len(cat_targets) else -1
+                if min_label < 0 or max_label >= n_classes:
+                    raise ValueError(
+                        f"Categorical feature {cat_idx} fora do range após encoding 0-based. "
+                        f"offset={offset}, labels=[{min_label}, {max_label}], n_classes={n_classes}"
+                    )
+
                 targets.append(cat_targets)
         
         return targets
@@ -174,6 +192,11 @@ class Autoencoder:
         val_array = dataset.features_validation.values if hasattr(dataset.features_validation, 'values') else dataset.features_validation
         
         X_pretrain = np.vstack([train_array, val_array])
+
+        if self.categorical_indices:
+            for cat_idx in self.categorical_indices:
+                col = X_pretrain[:, cat_idx].astype(float)
+                self.categorical_offsets[cat_idx] = int(np.nanmin(col))
         
         X_masked, mask = self.create_masked_data(X_pretrain)
         
@@ -184,7 +207,15 @@ class Autoencoder:
         if self.categorical_indices:
             for i, cat_idx in enumerate(self.categorical_indices):
                 offset = 1 if self.continuous_indices else 0
-                print(f"  - Categorical {cat_idx}: shape {y_targets[offset + i].shape}, unique classes {np.unique(y_targets[offset + i])}")
+                raw_col = X_pretrain[:, cat_idx].astype(float)
+                orig_min = int(np.nanmin(raw_col))
+                orig_max = int(np.nanmax(raw_col))
+                used_offset = self.categorical_offsets.get(cat_idx)
+                encoded_unique = np.unique(y_targets[offset + i])
+                print(
+                    f"  - Categorical {cat_idx}: shape {y_targets[offset + i].shape}, "
+                    f"unique classes (0-based) {encoded_unique} (orig [{orig_min}, {orig_max}], offset={used_offset})"
+                )
         
         # callbacks
         early_stopping = keras.callbacks.EarlyStopping(
