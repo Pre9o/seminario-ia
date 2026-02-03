@@ -13,7 +13,7 @@ import numpy as np
 def objective(trial, dataset_path, target_column, categorical_indices, categorical_cardinalities):
     dataset = Dataset(dataset_path, target_column)
 
-    mask_ratio = trial.suggest_float('mask_ratio', 0.3, 0.5)
+    mask_ratio = trial.suggest_float('mask_ratio', 0.3, 0.7)
     learning_rate = trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [4, 8, 16, 32, 64])
     epochs = trial.suggest_int('epochs', 50, 300, step=50)
@@ -83,77 +83,104 @@ def optimize_hyperparameters(dataset_path, target_column, categorical_indices, c
     return study
 
 
-def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinalities, result_dir):
+def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinalities, result_dir, n_runs):
     best_params = study.best_params
 
-    autoencoder = AutoencoderTransformer(
-        shape=dataset.get_shape(),
-        categorical_indices=categorical_indices,
-        categorical_cardinalities=categorical_cardinalities,
-        mask_ratio=best_params['mask_ratio'],
-        embed_dim=best_params['embed_dim'],
-        num_layers=best_params['num_layers'],
-        num_heads=best_params['num_heads'],
-        ff_dim=best_params['ff_dim'],
-        dropout=best_params['dropout'],
-        learning_rate=best_params['learning_rate'],
-        mask_value=-999.0,
-    )
-
-    autoencoder.train(
-        dataset,
-        epochs=best_params['epochs'],
-        batch_size=best_params['batch_size'],
-        verbose=1,
-        plot_path=os.path.join(result_dir, 'training_curves.png'),
-    )
-
-    autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))
+    n_runs = 20
+    all_results = []
+    runs_path = os.path.join(result_dir, 'reconstruction_metrics_runs.txt')
+    with open(runs_path, 'w'):
+        pass
 
     test_array = dataset.features_test.values if hasattr(dataset.features_test, 'values') else dataset.features_test
-    X_test_masked, _ = autoencoder.create_masked_data(test_array)
-    y_test_targets = autoencoder.prepare_targets(test_array)
-    
-    predictions = autoencoder.model.predict(X_test_masked, verbose=0)
-    
-    results = {}
-    
-    if autoencoder.continuous_indices:
-        continuous_pred = predictions[0]
-        continuous_true = y_test_targets[0]
-        mse = np.mean((continuous_pred - continuous_true) ** 2)
-        mae = np.mean(np.abs(continuous_pred - continuous_true))
-        results['continuous_mse'] = float(mse)
-        results['continuous_mae'] = float(mae)
-    
-    if autoencoder.categorical_indices:
-        offset = 1 if autoencoder.continuous_indices else 0
-        for i, cat_idx in enumerate(autoencoder.categorical_indices):
-            cat_pred = predictions[offset + i]
-            cat_true = y_test_targets[offset + i]
-            
-            cat_pred_class = np.argmax(cat_pred, axis=1)
-            accuracy = np.mean(cat_pred_class == cat_true)
-            
-            cat_true_one_hot = np.zeros_like(cat_pred)
-            cat_true_one_hot[np.arange(len(cat_true)), cat_true.astype(int)] = 1
-            ce_loss = -np.mean(np.sum(cat_true_one_hot * np.log(cat_pred + 1e-10), axis=1))
-            
-            results[f'categorical_{cat_idx}_accuracy'] = float(accuracy)
-            results[f'categorical_{cat_idx}_ce_loss'] = float(ce_loss)
+
+    for run_idx in range(n_runs):
+        autoencoder = AutoencoderTransformer(
+            shape=dataset.get_shape(),
+            categorical_indices=categorical_indices,
+            categorical_cardinalities=categorical_cardinalities,
+            mask_ratio=best_params['mask_ratio'],
+            embed_dim=best_params['embed_dim'],
+            num_layers=best_params['num_layers'],
+            num_heads=best_params['num_heads'],
+            ff_dim=best_params['ff_dim'],
+            dropout=best_params['dropout'],
+            learning_rate=best_params['learning_rate'],
+            mask_value=-999.0,
+        )
+
+        autoencoder.train(
+            dataset,
+            epochs=best_params['epochs'],
+            batch_size=best_params['batch_size'],
+            verbose=1,
+            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx + 1}.png'),
+        )
+
+        autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))
+
+        X_test_masked, _ = autoencoder.create_masked_data(test_array)
+        y_test_targets = autoencoder.prepare_targets(test_array)
+
+        predictions = autoencoder.model.predict(X_test_masked, verbose=0)
+
+        results = {}
+
+        if autoencoder.continuous_indices:
+            continuous_pred = predictions[0]
+            continuous_true = y_test_targets[0]
+            mse = np.mean((continuous_pred - continuous_true) ** 2)
+            mae = np.mean(np.abs(continuous_pred - continuous_true))
+            results['continuous_mse'] = float(mse)
+            results['continuous_mae'] = float(mae)
+
+        if autoencoder.categorical_indices:
+            offset = 1 if autoencoder.continuous_indices else 0
+            for i, cat_idx in enumerate(autoencoder.categorical_indices):
+                cat_pred = predictions[offset + i]
+                cat_true = y_test_targets[offset + i]
+
+                cat_pred_class = np.argmax(cat_pred, axis=1)
+                accuracy = np.mean(cat_pred_class == cat_true)
+
+                cat_true_one_hot = np.zeros_like(cat_pred)
+                cat_true_one_hot[np.arange(len(cat_true)), cat_true.astype(int)] = 1
+                ce_loss = -np.mean(np.sum(cat_true_one_hot * np.log(cat_pred + 1e-10), axis=1))
+
+                results[f'categorical_{cat_idx}_accuracy'] = float(accuracy)
+                results[f'categorical_{cat_idx}_ce_loss'] = float(ce_loss)
+
+        all_results.append(results)
+
+        with open(runs_path, 'a') as f:
+            f.write(f"run: {run_idx + 1}\n")
+            for key in sorted(results.keys()):
+                f.write(f"{key}: {results[key]:.6f}\n")
+            f.write("\n")
+
+    metric_keys = sorted({k for r in all_results for k in r.keys()})
+    mean_results = {}
+    std_results = {}
+    for k in metric_keys:
+        vals = [r[k] for r in all_results if k in r]
+        mean_results[k] = float(np.mean(vals)) if vals else float('nan')
+        if not vals:
+            std_results[k] = float('nan')
+        elif len(vals) == 1:
+            std_results[k] = 0.0
+        else:
+            std_results[k] = float(np.std(vals, ddof=1))
 
     with open(os.path.join(result_dir, 'best_hyperparameters.txt'), 'w') as f:
         for key, value in best_params.items():
             f.write(f"{key}: {value}\n")
-    
+
     with open(os.path.join(result_dir, 'reconstruction_metrics.txt'), 'w') as f:
         f.write("Métricas de Reconstrução no Conjunto de Teste:\n\n")
-        for key, value in results.items():
-            f.write(f"{key}: {value:.4f}\n")
-
-    with open(os.path.join(result_dir, 'best_hyperparameters.txt'), 'w') as f:
-        for key, value in best_params.items():
-            f.write(f"{key}: {value}\n")
+        f.write(f"n_runs: {n_runs}\n\n")
+        for key in metric_keys:
+            f.write(f"{key}_mean: {mean_results[key]:.6f}\n")
+            f.write(f"{key}_std: {std_results[key]:.6f}\n")
 
     return autoencoder
 
@@ -165,6 +192,7 @@ if __name__ == '__main__':
     args.add_argument('--n_trials', type=int, default=20)
     args.add_argument('--load_study', action='store_true')
     args.add_argument('--study_path', type=str, default='')
+    args.add_argument('--n_runs', type=int, default=20)
     args = args.parse_args()
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -197,5 +225,5 @@ if __name__ == '__main__':
             result_dir,
         )
 
-    train_and_evaluate(study, dataset, categorical_indices, categorical_cardinalities, result_dir)
+    train_and_evaluate(study, dataset, categorical_indices, categorical_cardinalities, result_dir, args.n_runs)
 
