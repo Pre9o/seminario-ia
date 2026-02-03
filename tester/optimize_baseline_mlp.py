@@ -3,7 +3,7 @@ import optuna
 from optuna.pruners import MedianPruner
 from dataset import Dataset
 from mlp_modified import MLP
-from sklearn.metrics import roc_curve, auc, confusion_matrix, brier_score_loss, f1_score, accuracy_score, precision_score, recall_score
+from sklearn.metrics import roc_curve, auc, confusion_matrix, brier_score_loss, f1_score, precision_score, recall_score, accuracy_score
 import numpy as np
 from argparse import ArgumentParser
 import joblib
@@ -105,10 +105,9 @@ def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
     return study
 
 
-def train_and_evaluate(study, dataset, result_dir):
+def train_and_evaluate(study, dataset, result_dir, n_runs):
     best_params = study.best_params
 
-    n_runs = 20
     all_results = []
     runs_path = os.path.join(result_dir, 'classification_metrics_runs.txt')
     with open(runs_path, 'w'):
@@ -146,9 +145,8 @@ def train_and_evaluate(study, dataset, result_dir):
         y_true = dataset.target_test.values
 
         accuracy = accuracy_score(y_true, y_pred_class)
-        precision = precision_score(y_true, y_pred_class, zero_division=0)
-        recall = recall_score(y_true, y_pred_class, zero_division=0)
-        f1 = f1_score(y_true, y_pred_class, zero_division=0)
+        precision_macro = precision_score(y_true, y_pred_class, average='macro', zero_division=0)
+        recall_macro = recall_score(y_true, y_pred_class, average='macro', zero_division=0)
         f1_macro = f1_score(y_true, y_pred_class, average='macro', zero_division=0)
 
         conf_matrix = confusion_matrix(y_true, y_pred_class)
@@ -160,9 +158,8 @@ def train_and_evaluate(study, dataset, result_dir):
         results['best_threshold'] = best_threshold
         results['best_val_f1_macro'] = best_val_f1
         results['accuracy'] = accuracy
-        results['precision'] = precision
-        results['recall'] = recall
-        results['f1'] = f1
+        results['precision_macro'] = precision_macro
+        results['recall_macro'] = recall_macro
         results['f1_macro'] = f1_macro
         results['auc_roc'] = auc_score
         results['brier_score'] = brier_score
@@ -173,7 +170,7 @@ def train_and_evaluate(study, dataset, result_dir):
         with open(runs_path, 'a') as f:
             f.write(f"run: {run_idx + 1}\n")
             for key in sorted(results.keys()):
-                f.write(f"{key}: {results[key]:.6f}\n")
+                f.write(f"{key}: {results[key]:.4f}\n")
             f.write("confusion_matrix:\n")
             f.write(np.array2string(conf_matrix))
             f.write("\n\n")
@@ -206,6 +203,7 @@ if __name__ == "__main__":
     args.add_argument('--n_trials', type=int, default=20, help='Number of trials for optimization')
     args.add_argument('--load_study', action='store_true', help='Load existing study')
     args.add_argument('--study_path', type=str, default='', help='Path to the saved study')
+    args.add_argument('--n_runs', type=int, default=20, help='Number of runs for training and evaluation')
     args = args.parse_args()
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -221,4 +219,4 @@ if __name__ == "__main__":
     else:
         study = optimize_hyperparameters(dataset_path, args.target_column, args.n_trials, result_dir)
 
-    train_and_evaluate(study, dataset, result_dir)
+    train_and_evaluate(study, dataset, result_dir, args.n_runs)
