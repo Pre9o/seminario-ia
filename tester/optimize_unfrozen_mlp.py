@@ -3,7 +3,7 @@ import optuna
 from optuna.pruners import MedianPruner
 from dataset import Dataset
 from mlp_modified import MLP
-from sklearn.metrics import roc_curve, auc, classification_report, confusion_matrix, brier_score_loss, f1_score
+from sklearn.metrics import roc_curve, auc, confusion_matrix, brier_score_loss, f1_score, accuracy_score, precision_score, recall_score
 from tensorflow import keras
 import numpy as np
 from argparse import ArgumentParser
@@ -107,56 +107,97 @@ def optimize_hyperparameters(dataset_path, encoder_path, target_column, n_trials
     return study
 
 
-def train_and_evaluate(study, dataset, encoder_path, result_dir):
+def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
     best_params = study.best_params
     pretrained_encoder = keras.models.load_model(encoder_path)
+
+    all_results = []
+    runs_path = os.path.join(result_dir, 'classification_metrics_runs.txt')
+    with open(runs_path, 'w') as f:
+        pass
     
-    mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder)
-    mlp.unfreeze_encoder(learning_rate=best_params['finetune_lr'])
     class_weight = compute_class_weight(dataset.target_train.values)
-    mlp.train(
-        dataset,
-        epochs=best_params['finetune_epochs'],
-        batch_size=best_params['batch_size'],
-        verbose=1,
-        plot_path=os.path.join(result_dir, 'training_curves.png'),
-        class_weight=class_weight,
-    )
-    
-    mlp.model.save(os.path.join(result_dir, 'best_model.keras'))
-    
-    y_val_true = dataset.target_validation.values
-    y_val_proba = mlp.model.predict(dataset.features_validation, verbose=0).flatten()
-    best_threshold, best_val_f1 = find_best_threshold(y_val_true, y_val_proba)
-
-    y_pred_proba = mlp.model.predict(dataset.features_test, verbose=0).flatten()
-    y_pred_class = (y_pred_proba >= best_threshold).astype(int).flatten()
-    y_true = dataset.target_test.values
-    
-    class_report = classification_report(y_true, y_pred_class, digits=4)
-    conf_matrix = confusion_matrix(y_true, y_pred_class)
-    fpr, tpr, thresholds = roc_curve(y_true, y_pred_proba)
-    auc_score = auc(fpr, tpr)
-    brier_score = brier_score_loss(y_true, y_pred_proba)
-    ece = calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=best_threshold)
-
     with open(os.path.join(result_dir, 'best_hyperparameters.txt'), 'w') as f:
         for key, value in best_params.items():
             f.write(f"{key}: {value}\n")
         f.write(f"class_weight: {class_weight}\n")
-        f.write(f"best_threshold: {best_threshold}\n")
-        f.write(f"best_val_f1_macro: {best_val_f1}\n")
+
+    for run_idx in range(n_runs):
+        mlp = MLP(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder)
+        mlp.unfreeze_encoder(learning_rate=best_params['finetune_lr'])
+        
+        mlp.train(
+            dataset,
+            epochs=best_params['finetune_epochs'],
+            batch_size=best_params['batch_size'],
+            verbose=1,
+            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx+1}.png'),
+            class_weight=class_weight,
+        )
     
-    with open(os.path.join(result_dir, 'classification_report.txt'), 'w') as f:
-        f.write(class_report)
-        f.write("\nMatriz de Confusão:\n")
-        f.write(np.array2string(conf_matrix))
-        f.write(f"\nThreshold: {best_threshold:.4f}\n")
-        f.write(f"\nAUC-ROC: {auc_score:.4f}\n")
-        f.write(f"Brier Score: {brier_score:.4f}\n")
-        f.write(f"ECE: {ece:.4f}\n")
+        mlp.model.save(os.path.join(result_dir, 'best_model.keras'))
     
-    return mlp
+        y_val_true = dataset.target_validation.values
+        y_val_proba = mlp.model.predict(dataset.features_validation, verbose=0).flatten()
+        best_threshold, best_val_f1 = find_best_threshold(y_val_true, y_val_proba)
+
+        results = {}
+
+        y_pred_proba = mlp.model.predict(dataset.features_test, verbose=0).flatten()
+        y_pred_class = (y_pred_proba >= best_threshold).astype(int).flatten()
+        y_true = dataset.target_test.values
+
+        accuracy = accuracy_score(y_true, y_pred_class)
+        precision_macro = precision_score(y_true, y_pred_class, average='macro', zero_division=0)
+        recall_macro = recall_score(y_true, y_pred_class, average='macro', zero_division=0)
+        f1_macro = f1_score(y_true, y_pred_class, average='macro', zero_division=0)
+
+        conf_matrix = confusion_matrix(y_true, y_pred_class)
+        fpr, tpr, thresholds = roc_curve(y_true, y_pred_proba)
+        auc_score = auc(fpr, tpr)
+        brier_score = brier_score_loss(y_true, y_pred_proba)
+        ece = calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=best_threshold)
+
+        results['best_threshold'] = best_threshold
+        results['best_val_f1_macro'] = best_val_f1
+        results['accuracy'] = accuracy
+        results['precision_macro'] = precision_macro
+        results['recall_macro'] = recall_macro
+        results['f1_macro'] = f1_macro
+        results['auc_roc'] = auc_score
+        results['brier_score'] = brier_score
+        results['ece'] = ece
+
+        all_results.append(results)
+    
+        with open(runs_path, 'a') as f:
+            f.write(f"run: {run_idx + 1}\n")
+            for key in sorted(results.keys()):
+                f.write(f"{key}: {results[key]:.4f}\n")
+            f.write("confusion_matrix:\n")
+            f.write(np.array2string(conf_matrix))
+            f.write("\n\n")
+
+    metric_keys = sorted({k for r in all_results for k in r.keys()})
+    mean_results = {}
+    std_results = {}
+    for k in metric_keys:
+        vals = [r[k] for r in all_results if k in r]
+        mean_results[k] = float(np.mean(vals)) if vals else float('nan')
+        if not vals:
+            std_results[k] = float('nan')
+        elif len(vals) == 1:
+            std_results[k] = 0.0
+        else:
+            std_results[k] = float(np.std(vals))
+
+    with open(os.path.join(result_dir, 'classification_metrics.txt'), 'w') as f:
+        f.write("Métricas de Classificação no Conjunto de Teste (média):\n\n")
+        f.write(f"n_runs: {n_runs}\n\n")
+        for key in metric_keys:
+            f.write(f"{key}_mean: {mean_results[key]:.4f}\n")
+            f.write(f"{key}_std: {std_results[key]:.4f}\n")
+            
 
 if __name__ == "__main__":
     args = ArgumentParser()
