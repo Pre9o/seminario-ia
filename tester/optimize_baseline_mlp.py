@@ -10,6 +10,46 @@ import joblib
 import matplotlib.pyplot as plt
 from datetime import datetime
 
+
+def sample_hidden_layers(trial, *, max_layers=5, first_layer_choices=None, min_neurons=4):
+ 
+    if first_layer_choices is None:
+        first_layer_choices = [8, 16, 32, 64, 128]
+
+    n_layers = trial.suggest_int('n_layers', 1, max_layers)
+    layer_1 = trial.suggest_categorical('layer_1', first_layer_choices)
+    layers = [int(layer_1)]
+
+    prev = layers[0]
+    for i in range(2, n_layers + 1):
+        ratio = trial.suggest_categorical(f'layer_{i}_ratio', ['same', 'half'])
+        if prev <= min_neurons or (prev // 2) < min_neurons:
+            ratio = 'same'
+        nxt = prev if ratio == 'same' else prev // 2
+        layers.append(int(nxt))
+        prev = nxt
+
+    layers = [n for n in layers if n >= min_neurons]
+    return layers
+
+def build_hidden_layers_from_params(best_params, *, min_neurons=4):
+    n_layers = best_params.get('n_layers', 1)
+    layer_1 = best_params.get('layer_1', 128)
+
+    layers = [layer_1]
+    prev = layer_1
+    for i in range(2, n_layers + 1):
+        ratio = best_params.get(f'layer_{i}_ratio', 'same')
+        if prev <= min_neurons:
+            ratio = 'same'
+        nxt = prev if ratio == 'same' else prev // 2
+        if nxt < min_neurons:
+            break
+        layers.append(int(nxt))
+        prev = nxt
+
+    return layers
+
 def calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=0.5):
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
     bin_lowers = bin_boundaries[:-1]
@@ -54,16 +94,21 @@ def find_best_threshold(y_true, y_proba, thresholds=None):
 
     return best_threshold, float(best_score)
 
+
 def objective(trial, dataset_path, target_column):
     dataset = Dataset(dataset_path, target_column)
-    
+
+    l2_reg = trial.suggest_float('l2_reg', 1e-6, 1e-2, log=True)
+    weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
+    hidden_layers = sample_hidden_layers(trial, max_layers=5, min_neurons=4)
+    dropout_rate = trial.suggest_float('dropout_rate', 0.0, 0.5, step=0.1)
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
     epochs = trial.suggest_int('epochs', 50, 500, step=50)
     
     try:
-        mlp = MLP(shape=dataset.get_shape())
-        mlp.compile(learning_rate=learning_rate)
+        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate, l2_reg=l2_reg)
+        mlp.compile(learning_rate=learning_rate, weight_decay=weight_decay)
         class_weight = compute_class_weight(dataset.target_train.values)
         mlp.train(dataset, epochs=epochs, batch_size=batch_size, verbose=0, plot_path=None, class_weight=class_weight)
 
@@ -107,8 +152,14 @@ def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
 
 def train_and_evaluate(study, dataset, result_dir, n_runs):
     best_params = study.best_params
+    hidden_layers = build_hidden_layers_from_params(best_params, min_neurons=4)
+    dropout_rate = best_params.get('dropout_rate', 0.0)
+    l2_reg = best_params.get('l2_reg', 0.01)
 
     all_results = []
+    roc_tprs = []
+    roc_aucs = []
+    mean_fpr = np.linspace(0.0, 1.0, 201)
     runs_path = os.path.join(result_dir, 'classification_metrics_runs.txt')
     with open(runs_path, 'w'):
         pass
@@ -117,11 +168,12 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
     with open(os.path.join(result_dir, 'best_hyperparameters.txt'), 'w') as f:
         for key, value in best_params.items():
             f.write(f"{key}: {value}\n")
+        f.write(f"hidden_layers: {hidden_layers}\n")
         f.write(f"class_weight: {class_weight}\n")
 
     for run_idx in range(n_runs):
-        mlp = MLP(shape=dataset.get_shape())
-        mlp.compile(learning_rate=best_params['learning_rate'])
+        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate, l2_reg=best_params['l2_reg'])
+        mlp.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
         
         mlp.train(
             dataset,
@@ -155,6 +207,12 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         brier_score = brier_score_loss(y_true, y_pred_proba)
         ece = calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=best_threshold)
 
+        interp_tpr = np.interp(mean_fpr, fpr, tpr)
+        interp_tpr[0] = 0.0
+        interp_tpr[-1] = 1.0
+        roc_tprs.append(interp_tpr)
+        roc_aucs.append(float(auc_score))
+
         results['best_threshold'] = best_threshold
         results['best_val_f1_macro'] = best_val_f1
         results['accuracy'] = accuracy
@@ -174,6 +232,35 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
             f.write("confusion_matrix:\n")
             f.write(np.array2string(conf_matrix))
             f.write("\n\n")
+
+    if roc_tprs:
+        tprs = np.vstack(roc_tprs)
+        mean_tpr = np.mean(tprs, axis=0)
+        std_tpr = np.std(tprs, axis=0, ddof=1) if len(roc_tprs) > 1 else np.zeros_like(mean_tpr)
+        auc_mean = float(np.mean(roc_aucs))
+        auc_std = float(np.std(roc_aucs, ddof=1)) if len(roc_aucs) > 1 else 0.0
+
+        plt.figure(figsize=(6, 6))
+        plt.plot(mean_fpr, mean_tpr, color='C0', lw=2, label=f"ROC média (AUC={auc_mean:.3f}±{auc_std:.3f})")
+        plt.fill_between(
+            mean_fpr,
+            np.clip(mean_tpr - std_tpr, 0, 1),
+            np.clip(mean_tpr + std_tpr, 0, 1),
+            color='C0',
+            alpha=0.2,
+            label="±1 desvio padrão",
+        )
+        plt.plot([0, 1], [0, 1], linestyle='--', color='gray', lw=1, label='Aleatório')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.0])
+        plt.xlabel('FPR')
+        plt.ylabel('TPR')
+        plt.title('Curva ROC média (teste)')
+        plt.legend(loc='lower right')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(result_dir, 'roc_mean.png'), dpi=300, bbox_inches='tight')
+        plt.close()
 
     metric_keys = sorted({k for r in all_results for k in r.keys()})
     mean_results = {}

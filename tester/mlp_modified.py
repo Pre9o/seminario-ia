@@ -66,7 +66,7 @@ class MacroF1Callback(keras.callbacks.Callback):
             print(f" - val_f1_macro: {f1_macro:.4f}", end='')
 
 class MLP:
-    def __init__(self, shape, layers=HIDDEN_LAYERS, activation=ACTIVATION, pretrained_encoder=None):
+    def __init__(self, shape, layers=HIDDEN_LAYERS, activation=ACTIVATION, dropout_rate=0.2, l2_reg=0.01, pretrained_encoder=None):
         self.model = keras.models.Sequential()
         self.shape = shape
         
@@ -83,14 +83,13 @@ class MLP:
                     keras.layers.Dense(
                         neurons,
                         activation=activation,
-                        kernel_regularizer=regularizers.l2(0.01),
+                        kernel_regularizer=regularizers.l2(l2_reg),
                         name=f'camada_oculta_{idx+1}_{activation}'
                     )
                 )
-                self.model.add(keras.layers.Dropout(DROPOUTS[idx], name=f'dropout_{idx+1}'))
+                self.model.add(keras.layers.Dropout(dropout_rate, name=f'dropout_{idx+1}'))
 
         self.model.add(keras.layers.Dense(1, activation='sigmoid', name='camada_saida_sigmoid'))
-        self.compile()
         self.history = None
     
     def unfreeze_encoder(self, learning_rate=0.0001):

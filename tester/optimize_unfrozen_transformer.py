@@ -200,7 +200,7 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
         with open(runs_path, 'a') as f:
             f.write(f"run: {run_idx + 1}\n")
             for key in sorted(results.keys()):
-                f.write(f"{key}: {results[key]}\n")
+                f.write(f"{key}: {results[key]:.4f}\n")
             f.write("confusion_matrix:\n")
             f.write(np.array2string(conf_matrix))
             f.write("\n\n")
