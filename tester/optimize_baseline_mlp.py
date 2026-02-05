@@ -12,7 +12,6 @@ from datetime import datetime
 
 
 def sample_hidden_layers(trial, *, max_layers=5, first_layer_choices=None, min_neurons=4):
- 
     if first_layer_choices is None:
         first_layer_choices = [8, 16, 32, 64, 128]
 
@@ -140,11 +139,11 @@ def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
     joblib.dump(study, os.path.join(result_dir, 'study.pkl'))
     
     fig = optuna.visualization.matplotlib.plot_optimization_history(study)
-    plt.savefig(os.path.join(result_dir, 'optimization_history.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'optimization_history.svg'), dpi=300, bbox_inches='tight')
     plt.close()
     
     fig = optuna.visualization.matplotlib.plot_param_importances(study)
-    plt.savefig(os.path.join(result_dir, 'param_importance.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'param_importance.svg'), dpi=300, bbox_inches='tight')
     plt.close()
     
     return study
@@ -154,11 +153,13 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
     best_params = study.best_params
     hidden_layers = build_hidden_layers_from_params(best_params, min_neurons=4)
     dropout_rate = best_params.get('dropout_rate', 0.0)
-    l2_reg = best_params.get('l2_reg', 0.01)
 
     all_results = []
     roc_tprs = []
     roc_aucs = []
+
+    best_run_f1_macro = -1.0
+
     mean_fpr = np.linspace(0.0, 1.0, 201)
     runs_path = os.path.join(result_dir, 'classification_metrics_runs.txt')
     with open(runs_path, 'w'):
@@ -180,12 +181,10 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
             epochs=best_params['epochs'],
             batch_size=best_params['batch_size'],
             verbose=1,
-            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx+1}.png'),
+            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx+1}.svg'),
             class_weight=class_weight,
         )
     
-        mlp.model.save(os.path.join(result_dir, 'best_model.keras'))
-
         y_val_true = dataset.target_validation.values
         y_val_proba = mlp.model.predict(dataset.features_validation, verbose=0).flatten()
         best_threshold, best_val_f1 = find_best_threshold(y_val_true, y_val_proba)
@@ -211,7 +210,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         interp_tpr[0] = 0.0
         interp_tpr[-1] = 1.0
         roc_tprs.append(interp_tpr)
-        roc_aucs.append(float(auc_score))
+        roc_aucs.append(auc_score)
 
         results['best_threshold'] = best_threshold
         results['best_val_f1_macro'] = best_val_f1
@@ -222,6 +221,11 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         results['auc_roc'] = auc_score
         results['brier_score'] = brier_score
         results['ece'] = ece
+
+        if results['f1_macro'] > best_run_f1_macro:
+            best_run_f1_macro = results['f1_macro']
+            mlp.model.save(os.path.join(result_dir, 'best_model.keras'))
+            
 
         all_results.append(results)
 
@@ -259,12 +263,13 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         plt.legend(loc='lower right')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(os.path.join(result_dir, 'roc_mean.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(result_dir, 'roc_mean.svg'), dpi=300, bbox_inches='tight')
         plt.close()
 
     metric_keys = sorted({k for r in all_results for k in r.keys()})
     mean_results = {}
     std_results = {}
+    
     for k in metric_keys:
         vals = [r[k] for r in all_results if k in r]
         mean_results[k] = float(np.mean(vals)) if vals else float('nan')

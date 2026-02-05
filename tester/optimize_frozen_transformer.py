@@ -119,11 +119,11 @@ def optimize_hyperparameters(dataset_path, encoder_path, target_column, n_trials
     joblib.dump(study, os.path.join(result_dir, 'study.pkl'))
     
     fig = optuna.visualization.matplotlib.plot_optimization_history(study)
-    plt.savefig(os.path.join(result_dir, 'optimization_history.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'optimization_history.svg'), dpi=300, bbox_inches='tight')
     plt.close()
     
     fig = optuna.visualization.matplotlib.plot_param_importances(study)
-    plt.savefig(os.path.join(result_dir, 'param_importance.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'param_importance.svg'), dpi=300, bbox_inches='tight')
     plt.close()
     
     return study
@@ -139,6 +139,12 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
     )
 
     all_results = []
+    roc_tprs = []
+    roc_aucs = []
+
+    best_run_f1_macro = -1.0
+
+    mean_fpr = np.linspace(0.0, 1.0, 201)
     runs_path = os.path.join(result_dir, 'classification_report_runs.txt')
     with open(runs_path, 'w'):
         pass
@@ -153,17 +159,16 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
         classifier = TransformerClassifier(shape=dataset.get_shape(), pretrained_encoder=pretrained_encoder)
         classifier.freeze_encoder()
         classifier.compile(learning_rate=best_params['finetune_lr'])
+
         classifier.train(
             dataset,
             epochs=best_params['finetune_epochs'],
             batch_size=best_params['batch_size'],
             verbose=1,
-            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx + 1}.png'),
+            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx + 1}.svg'),
             class_weight=class_weight,
         )
-    
-        classifier.model.save(os.path.join(result_dir, 'best_model.keras'))
-    
+        
         y_val_true = dataset.target_validation.values
         y_val_proba = classifier.model.predict(dataset.features_validation, verbose=0).flatten()
         best_threshold, best_val_f1 = find_best_threshold(y_val_true, y_val_proba)
@@ -185,6 +190,12 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
         brier_score = brier_score_loss(y_true, y_pred_proba)
         ece = calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=best_threshold)
 
+        interp_tpr = np.interp(mean_fpr, fpr, tpr)
+        interp_tpr[0] = 0.0
+        interp_tpr[-1] = 1.0
+        roc_tprs.append(interp_tpr)
+        roc_aucs.append(auc_score)
+
         results['best_threshold'] = best_threshold
         results['best_val_f1_macro'] = best_val_f1
         results['accuracy'] = accuracy
@@ -195,6 +206,10 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
         results['brier_score'] = brier_score
         results['ece'] = ece
 
+        if results['f1_macro'] > best_run_f1_macro:
+            best_run_f1_macro = results['f1_macro']
+            classifier.model.save(os.path.join(result_dir, 'best_transformer_classifier.keras'))
+
         all_results.append(results)
 
         with open(runs_path, 'a') as f:
@@ -204,6 +219,35 @@ def train_and_evaluate(study, dataset, encoder_path, result_dir, n_runs):
             f.write("confusion_matrix:\n")
             f.write(np.array2string(conf_matrix))
             f.write("\n\n")
+
+    if roc_tprs:
+        tprs = np.vstack(roc_tprs)
+        mean_tpr = np.mean(tprs, axis=0)
+        std_tpr = np.std(tprs, axis=0, ddof=1) if len(roc_tprs) > 1 else np.zeros_like(mean_tpr)
+        auc_mean = float(np.mean(roc_aucs))
+        auc_std = float(np.std(roc_aucs, ddof=1)) if len(roc_aucs) > 1 else 0.0
+
+        plt.figure(figsize=(6, 6))
+        plt.plot(mean_fpr, mean_tpr, color='C0', lw=2, label=f"ROC média (AUC={auc_mean:.3f}±{auc_std:.3f})")
+        plt.fill_between(
+            mean_fpr,
+            np.clip(mean_tpr - std_tpr, 0, 1),
+            np.clip(mean_tpr + std_tpr, 0, 1),
+            color='C0',
+            alpha=0.2,
+            label="±1 desvio padrão",
+        )
+        plt.plot([0, 1], [0, 1], linestyle='--', color='gray', lw=1, label='Aleatório')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.0])
+        plt.xlabel('FPR')
+        plt.ylabel('TPR')
+        plt.title('Curva ROC média (teste)')
+        plt.legend(loc='lower right')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(result_dir, 'roc_mean.svg'), dpi=300, bbox_inches='tight')
+        plt.close()
     
     metric_keys = sorted({k for r in all_results for k in r.keys()})
     mean_results = {}
