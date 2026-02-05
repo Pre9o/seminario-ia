@@ -152,7 +152,7 @@ class MLP:
         
         return history.history
 
-    def plot_training_curves(self, filename='training_curves.png', figsize=(12, 5)):
+    def plot_training_curves(self, filename='training_curves.svg', figsize=(12, 5)):
         """
         Plota e salva as curvas de treinamento (loss e accuracy).
         

@@ -292,7 +292,7 @@ class AutoencoderTransformer:
 
         return history.history
 
-    def plot_training_curves(self, plot_path='training_curves.png'):
+    def plot_training_curves(self, plot_path='training_curves.svg'):
         if self.history is None:
             return
 

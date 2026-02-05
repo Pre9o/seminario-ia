@@ -139,11 +139,11 @@ def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
     joblib.dump(study, os.path.join(result_dir, 'study.pkl'))
     
     fig = optuna.visualization.matplotlib.plot_optimization_history(study)
-    plt.savefig(os.path.join(result_dir, 'optimization_history.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'optimization_history.svg'), dpi=300, bbox_inches='tight')
     plt.close()
     
     fig = optuna.visualization.matplotlib.plot_param_importances(study)
-    plt.savefig(os.path.join(result_dir, 'param_importance.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'param_importance.svg'), dpi=300, bbox_inches='tight')
     plt.close()
     
     return study
@@ -182,7 +182,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
             epochs=best_params['epochs'],
             batch_size=best_params['batch_size'],
             verbose=1,
-            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx+1}.png'),
+            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx+1}.svg'),
             class_weight=class_weight,
         )
     
@@ -264,7 +264,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         plt.legend(loc='lower right')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(os.path.join(result_dir, 'roc_mean.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(result_dir, 'roc_mean.svg'), dpi=300, bbox_inches='tight')
         plt.close()
 
     metric_keys = sorted({k for r in all_results for k in r.keys()})

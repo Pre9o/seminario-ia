@@ -82,11 +82,11 @@ def optimize_hyperparameters(dataset_path, target_column, categorical_indices, c
     joblib.dump(study, os.path.join(result_dir, 'study.pkl'))
     
     fig = optuna.visualization.matplotlib.plot_optimization_history(study)
-    plt.savefig(os.path.join(result_dir, 'optimization_history.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'optimization_history.svg'), dpi=300, bbox_inches='tight')
     plt.close()
     
     fig = optuna.visualization.matplotlib.plot_param_importances(study)
-    plt.savefig(os.path.join(result_dir, 'param_importance.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(result_dir, 'param_importance.svg'), dpi=300, bbox_inches='tight')
     plt.close()
     
     return study
@@ -119,7 +119,7 @@ def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinal
             epochs=best_params['pretrain_epochs'],
             batch_size=best_params['batch_size'],
             verbose=1,
-            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx + 1}.png')
+            plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx + 1}.svg')
         )
 
         autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))

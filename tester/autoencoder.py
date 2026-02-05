@@ -269,7 +269,7 @@ class Autoencoder:
             self.plot_training_curves(plot_path=plot_path)
         return history.history
     
-    def plot_training_curves(self, plot_path='training_curves.png'):
+    def plot_training_curves(self, plot_path='training_curves.svg'):
         if self.history is None:
             print("Nenhum histórico de treinamento disponível para plotar.")
             return
