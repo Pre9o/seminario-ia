@@ -62,11 +62,9 @@ class MacroF1Callback(keras.callbacks.Callback):
         self.val_f1_macro.append(f1_macro)
         logs['val_f1_macro'] = f1_macro
         
-        if epoch % 10 == 0 or epoch < 5:
-            print(f" - val_f1_macro: {f1_macro:.4f}", end='')
 
 class MLP:
-    def __init__(self, shape, layers=HIDDEN_LAYERS, activation=ACTIVATION, dropout_rate=0.2, l2_reg=0.01, pretrained_encoder=None):
+    def __init__(self, shape, layers=HIDDEN_LAYERS, activation=ACTIVATION, dropout_rate=0.2, l2_reg=0.01, pretrained_encoder=None, pre_trained_mlp=None, freeze_layers=False):
         self.model = keras.models.Sequential()
         self.shape = shape
         
@@ -76,6 +74,22 @@ class MLP:
             
             for layer in pretrained_encoder.layers:
                 layer.trainable = False
+        elif pre_trained_mlp is not None:
+            print("Usando MLP pré-treinado!")
+            self.model = pre_trained_mlp
+            if freeze_layers:
+                for layer in self.model.layers:
+                    if layer.name != 'camada_saida_sigmoid':
+                        layer.trainable = False
+                        if hasattr(layer, "layers"):
+                            for sublayer in layer.layers:
+                                sublayer.trainable = False
+            else:
+                for layer in self.model.layers:
+                    layer.trainable = True
+                    if hasattr(layer, "layers"):
+                        for sublayer in layer.layers:
+                            sublayer.trainable = True
         else:
             self.model.add(keras.layers.InputLayer(input_shape=(self.shape,), name='input_layer'))
             for idx, neurons in enumerate(layers):
@@ -89,16 +103,38 @@ class MLP:
                 )
                 self.model.add(keras.layers.Dropout(dropout_rate, name=f'dropout_{idx+1}'))
 
-        self.model.add(keras.layers.Dense(1, activation='sigmoid', name='camada_saida_sigmoid'))
+        if pre_trained_mlp is None:
+            self.model.add(keras.layers.Dense(1, activation='sigmoid', name='camada_saida_sigmoid'))
+
         self.history = None
+
+        # self.model.summary()
+
+    def reset_output_layer(self, units=1, activation='sigmoid', layer_name='camada_saida_sigmoid'):
+        if self.model is None:
+            return None
+
+        if isinstance(self.model, keras.Sequential):
+            if len(self.model.layers) == 0:
+                return self.model
+            self.model.pop()
+            self.model.add(keras.layers.Dense(units, activation=activation, name=layer_name))
+            return self.model
+
+        if not getattr(self.model, 'inputs', None) or len(getattr(self.model, 'layers', [])) < 2:
+            return self.model
+        
+        penultimate = self.model.layers[-2].output
+        out = keras.layers.Dense(units, activation=activation, name=layer_name)(penultimate)
+        return keras.Model(inputs=self.model.inputs, outputs=out, name=self.model.name)
+
     
     def unfreeze_encoder(self, learning_rate=0.0001):
         for layer in self.model.layers:
             if layer.name == 'encoder':
                 layer.trainable = True
-                if hasattr(layer, "layers"):
-                    for sublayer in layer.layers:
-                        sublayer.trainable = True
+
+        self.model.summary()
         self.compile(learning_rate=learning_rate)
     
 
@@ -207,7 +243,7 @@ class MLP:
         
         return history.history
 
-    def plot_training_curves(self, plot_path='training_curves.png', figsize=(12, 5)):
+    def plot_training_curves(self, plot_path='training_curves.svg', figsize=(12, 5)):
         """
         Plota e salva as curvas de treinamento (loss e accuracy).
         
