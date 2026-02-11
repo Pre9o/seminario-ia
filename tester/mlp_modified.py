@@ -63,8 +63,26 @@ class MacroF1Callback(keras.callbacks.Callback):
         logs['val_f1_macro'] = f1_macro
         
 
+class RestoreBestF1(tf.keras.callbacks.Callback):
+    def __init__(self):
+        super().__init__()
+        self.best_f1 = -np.inf
+        self.best_weights = None
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        current_f1 = logs.get("val_f1_macro")
+
+        if current_f1 is not None and current_f1 > self.best_f1:
+            self.best_f1 = current_f1
+            self.best_weights = self.model.get_weights()
+
+    def on_train_end(self, logs=None):
+        if self.best_weights is not None:
+            self.model.set_weights(self.best_weights)
+
 class MLP:
-    def __init__(self, shape, layers=HIDDEN_LAYERS, activation=ACTIVATION, dropout_rate=0.2, l2_reg=0.01, pretrained_encoder=None, pre_trained_mlp=None, freeze_layers=False):
+    def __init__(self, shape, layers=HIDDEN_LAYERS, activation=ACTIVATION, dropout_rate=0.2, pretrained_encoder=None, pre_trained_mlp=None, freeze_layers=False):
         self.model = keras.models.Sequential()
         self.shape = shape
         
@@ -74,6 +92,8 @@ class MLP:
             
             for layer in pretrained_encoder.layers:
                 layer.trainable = False
+                for sublayer in getattr(layer, "layers", []):
+                    sublayer.trainable = False
         elif pre_trained_mlp is not None:
             print("Usando MLP pré-treinado!")
             self.model = pre_trained_mlp
@@ -97,7 +117,6 @@ class MLP:
                     keras.layers.Dense(
                         neurons,
                         activation=activation,
-                        kernel_regularizer=regularizers.l2(l2_reg),
                         name=f'camada_oculta_{idx+1}_{activation}'
                     )
                 )
@@ -133,6 +152,8 @@ class MLP:
         for layer in self.model.layers:
             if layer.name == 'encoder':
                 layer.trainable = True
+                for sublayer in getattr(layer, "layers", []):
+                    sublayer.trainable = True
 
         self.model.summary()
         self.compile(learning_rate=learning_rate)
@@ -166,14 +187,16 @@ class MLP:
         class_weight=None
     ):
         early_stopping = EarlyStopping(
-            monitor='val_loss',
-            patience=10,
-            restore_best_weights=True
+            monitor='val_auc',
+            patience=50,
+            restore_best_weights=False
         )
 
         macro_f1_callback = MacroF1Callback(
             validation_data=(dataset.features_validation, dataset.target_validation)
         )
+
+        restore_best_f1 = RestoreBestF1()
 
         y_train = dataset.target_train.astype('float32')
         y_val = dataset.target_validation.astype('float32')
@@ -183,7 +206,7 @@ class MLP:
             y_train,
             epochs=epochs, 
             validation_data=(dataset.features_validation, y_val),
-            callbacks=[macro_f1_callback, early_stopping],
+            callbacks=[macro_f1_callback, early_stopping, restore_best_f1],
             batch_size=batch_size,
             verbose=verbose,
             class_weight=class_weight

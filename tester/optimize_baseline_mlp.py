@@ -13,7 +13,7 @@ from datetime import datetime
 
 def sample_hidden_layers(trial, *, max_layers=5, first_layer_choices=None, min_neurons=4):
     if first_layer_choices is None:
-        first_layer_choices = [8, 16, 32, 64, 128]
+        first_layer_choices = [8, 16, 32, 64, 128, 256]
 
     n_layers = trial.suggest_int('n_layers', 1, max_layers)
     layer_1 = trial.suggest_categorical('layer_1', first_layer_choices)
@@ -31,9 +31,10 @@ def sample_hidden_layers(trial, *, max_layers=5, first_layer_choices=None, min_n
     layers = [n for n in layers if n >= min_neurons]
     return layers
 
+
 def build_hidden_layers_from_params(best_params, *, min_neurons=4):
     n_layers = best_params.get('n_layers', 1)
-    layer_1 = best_params.get('layer_1', 128)
+    layer_1 = best_params.get('layer_1', 256)
 
     layers = [layer_1]
     prev = layer_1
@@ -49,7 +50,8 @@ def build_hidden_layers_from_params(best_params, *, min_neurons=4):
 
     return layers
 
-def calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=0.5):
+
+def calculate_ece(y_true, y_pred_proba, n_bins=10):
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
     bin_lowers = bin_boundaries[:-1]
     bin_uppers = bin_boundaries[1:]
@@ -60,7 +62,7 @@ def calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=0.5):
         prop_in_bin = np.mean(in_bin)
         
         if prop_in_bin > 0:
-            accuracy_in_bin = np.mean(y_true[in_bin] == (y_pred_proba[in_bin] >= threshold).astype(int))
+            accuracy_in_bin = np.mean(y_true[in_bin])
             avg_confidence_in_bin = np.mean(y_pred_proba[in_bin])
             ece += np.abs(accuracy_in_bin - avg_confidence_in_bin) * prop_in_bin
     
@@ -89,24 +91,23 @@ def find_best_threshold(y_true, y_proba, thresholds=None):
         score = f1_score(y_true, y_pred, average='macro', zero_division=0)
         if score > best_score:
             best_score = score
-            best_threshold = float(t)
+            best_threshold = t
 
-    return best_threshold, float(best_score)
+    return best_threshold, best_score
 
 
 def objective(trial, dataset_path, target_column):
     dataset = Dataset(dataset_path, target_column)
 
-    l2_reg = trial.suggest_float('l2_reg', 1e-6, 1e-2, log=True)
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
     hidden_layers = sample_hidden_layers(trial, max_layers=5, min_neurons=4)
     dropout_rate = trial.suggest_float('dropout_rate', 0.0, 0.5, step=0.1)
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
-    epochs = trial.suggest_int('epochs', 50, 500, step=50)
+    epochs = trial.suggest_int('epochs', 50, 1000, step=50)
     
     try:
-        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate, l2_reg=l2_reg)
+        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate)
         mlp.compile(learning_rate=learning_rate, weight_decay=weight_decay)
         class_weight = compute_class_weight(dataset.target_train.values)
         mlp.train(dataset, epochs=epochs, batch_size=batch_size, verbose=0, plot_path=None, class_weight=class_weight)
@@ -173,7 +174,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         f.write(f"class_weight: {class_weight}\n")
 
     for run_idx in range(n_runs):
-        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate, l2_reg=best_params['l2_reg'])
+        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate)
         mlp.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
         
         mlp.train(
@@ -204,7 +205,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         fpr, tpr, thresholds = roc_curve(y_true, y_pred_proba)
         auc_score = auc(fpr, tpr)
         brier_score = brier_score_loss(y_true, y_pred_proba)
-        ece = calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=best_threshold)
+        ece = calculate_ece(y_true, y_pred_proba, n_bins=10)
 
         interp_tpr = np.interp(mean_fpr, fpr, tpr)
         interp_tpr[0] = 0.0
@@ -225,7 +226,6 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         if results['f1_macro'] > best_run_f1_macro:
             best_run_f1_macro = results['f1_macro']
             mlp.model.save(os.path.join(result_dir, 'best_model.keras'))
-            
 
         all_results.append(results)
 
