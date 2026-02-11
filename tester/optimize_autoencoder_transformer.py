@@ -82,12 +82,25 @@ def optimize_hyperparameters(dataset_path, target_column, categorical_indices, c
 
     return study
 
+def calculate_total_loss(results):
+    total_loss = 0.0
+    if 'continuous_mse' in results:
+        total_loss += results['continuous_mse']
+    if 'continuous_mae' in results:
+        total_loss += results['continuous_mae']
+    for key in results.keys():
+        if key.startswith('categorical_') and key.endswith('_ce_loss'):
+            total_loss += results[key]
+    results['total_loss'] = total_loss
+
 
 def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinalities, result_dir, n_runs):
     best_params = study.best_params
 
     n_runs = 20
     all_results = []
+    best_loss = float('inf')
+
     runs_path = os.path.join(result_dir, 'reconstruction_metrics_runs.txt')
     with open(runs_path, 'w'):
         pass
@@ -116,8 +129,6 @@ def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinal
             verbose=1,
             plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx + 1}.svg'),
         )
-
-        autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))
 
         X_test_masked, _ = autoencoder.create_masked_data(test_array)
         y_test_targets = autoencoder.prepare_targets(test_array)
@@ -149,6 +160,11 @@ def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinal
 
                 results[f'categorical_{cat_idx}_accuracy'] = float(accuracy)
                 results[f'categorical_{cat_idx}_ce_loss'] = float(ce_loss)
+
+        calculate_total_loss(results)
+        if results['total_loss'] < best_loss:
+            best_loss = results['total_loss']
+            autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))
 
         all_results.append(results)
 
