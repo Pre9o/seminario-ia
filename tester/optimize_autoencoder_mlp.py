@@ -10,38 +10,57 @@ import joblib
 import matplotlib.pyplot as plt
 
 
+def sample_hidden_layers(trial, *, max_layers=5, first_layer_choices=None, min_neurons=4):
+    if first_layer_choices is None:
+        first_layer_choices = [8, 16, 32, 64, 128]
+
+    n_layers = trial.suggest_int('n_layers', 2, max_layers)
+    layer_1 = trial.suggest_categorical('layer_1', first_layer_choices)
+    layers = [int(layer_1)]
+
+    prev = layers[0]
+    for i in range(2, n_layers + 1):
+        ratio = trial.suggest_categorical(f'layer_{i}_ratio', ['same', 'half'])
+        if prev <= min_neurons or (prev // 2) < min_neurons:
+            ratio = 'same'
+        nxt = prev if ratio == 'same' else prev // 2
+        layers.append(int(nxt))
+        prev = nxt
+
+    layers = [n for n in layers if n >= min_neurons]
+    return layers
+
+def build_hidden_layers_from_params(best_params, *, min_neurons=4):
+    n_layers = best_params.get('n_layers', 2)
+    layer_1 = best_params.get('layer_1', 128)
+
+    layers = [layer_1]
+    prev = layer_1
+    for i in range(2, n_layers + 1):
+        ratio = best_params.get(f'layer_{i}_ratio', 'same')
+        if prev <= min_neurons:
+            ratio = 'same'
+        nxt = prev if ratio == 'same' else prev // 2
+        if nxt < min_neurons:
+            break
+        layers.append(int(nxt))
+        prev = nxt
+
+    return layers
+
+
 def objective(trial, dataset_path, target_column, categorical_indices, categorical_cardinalities):
     dataset = Dataset(dataset_path, target_column)
     
-    n_layers = trial.suggest_int('n_layers', 2, 4)
-    
-    hidden_units = []
+    hidden_units = sample_hidden_layers(trial, max_layers=5, min_neurons=16)
     input_size = dataset.get_shape()
-    
-    for i in range(n_layers):
-        if i == 0:
-            min_units = max(16, input_size // 2)
-            max_units = min(256, input_size * 2)
-        else:
-            min_units = 8
-            max_units = max(16, hidden_units[-1] // 2)
-            
-            if max_units >= hidden_units[-1]:
-                max_units = hidden_units[-1] - 8
-        
-        if max_units < min_units:
-            max_units = min_units
-        
-        step = 8 if max_units < 64 else 16
-        
-        units = trial.suggest_int(f'units_layer_{i}', min_units, max_units, step=step)
-        hidden_units.append(units)
     
     mask_ratio = trial.suggest_float('mask_ratio', 0.1, 0.5)
     pretrain_lr = trial.suggest_float('pretrain_lr', 1e-4, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [4, 8, 16, 32, 64])
     pretrain_epochs = trial.suggest_int('pretrain_epochs', 50, 300, step=50)
-    
+    dropout_rate = trial.suggest_float('dropout_rate', 0.1, 0.5)
+    l2_reg = trial.suggest_float('l2_reg', 1e-5, 1e-2, log=True)
     
     try:
         autoencoder = Autoencoder(
@@ -51,7 +70,9 @@ def objective(trial, dataset_path, target_column, categorical_indices, categoric
             mask_ratio=mask_ratio,
             hidden_units=hidden_units,
             learning_rate=pretrain_lr,
-            mask_value=-999.0
+            mask_value=-999.0,
+            dropout_rate=dropout_rate,
+            l2_reg=l2_reg
         )
         
         history = autoencoder.train(dataset, epochs=pretrain_epochs, batch_size=batch_size, verbose=0)
@@ -91,14 +112,26 @@ def optimize_hyperparameters(dataset_path, target_column, categorical_indices, c
     
     return study
 
+def calculate_total_loss(results):
+    total_loss = 0.0
+    if 'continuous_mse' in results:
+        total_loss += results['continuous_mse']
+    if 'continuous_mae' in results:
+        total_loss += results['continuous_mae']
+    
+    for key in results.keys():
+        if key.startswith('categorical_') and key.endswith('_ce_loss'):
+            total_loss += results[key]
+    
+    results['total_loss'] = total_loss
 
 def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinalities, result_dir, n_runs):
     best_params = study.best_params
     
-    n_layers = best_params['n_layers']
-    hidden_units = [best_params[f'units_layer_{i}'] for i in range(n_layers)]
+    hidden_units = build_hidden_layers_from_params(best_params)
     
     all_results = []
+    best_loss = float('inf')
     runs_path = os.path.join(result_dir, 'reconstruction_metrics_runs.txt')
     
     test_array = dataset.features_test.values if hasattr(dataset.features_test, 'values') else dataset.features_test
@@ -111,7 +144,9 @@ def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinal
             mask_ratio=best_params['mask_ratio'],
             hidden_units=hidden_units,
             learning_rate=best_params['pretrain_lr'],
-            mask_value=-999.0
+            mask_value=-999.0,
+            dropout_rate=best_params['dropout_rate'],
+            l2_reg=best_params['l2_reg']
         )
 
         autoencoder.train(
@@ -121,8 +156,6 @@ def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinal
             verbose=1,
             plot_path=os.path.join(result_dir, f'training_curves_run_{run_idx + 1}.svg')
         )
-
-        autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))
 
         X_test_masked, _ = autoencoder.create_masked_data(test_array)
         y_test_targets = autoencoder.prepare_targets(test_array)
@@ -154,7 +187,11 @@ def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinal
 
                 results[f'categorical_{cat_idx}_accuracy'] = float(accuracy)
                 results[f'categorical_{cat_idx}_ce_loss'] = float(ce_loss)
-
+        
+        calculate_total_loss(results)
+        if results['total_loss'] < best_loss:
+            best_loss = results['total_loss']
+            autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))
         all_results.append(results)
 
         with open(runs_path, 'a') as f:
