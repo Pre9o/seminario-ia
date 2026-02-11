@@ -205,7 +205,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         fpr, tpr, thresholds = roc_curve(y_true, y_pred_proba)
         auc_score = auc(fpr, tpr)
         brier_score = brier_score_loss(y_true, y_pred_proba)
-        ece = calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=best_threshold)
+        ece = calculate_ece(y_true, y_pred_proba, n_bins=10)
 
         interp_tpr = np.interp(mean_fpr, fpr, tpr)
         interp_tpr[0] = 0.0
