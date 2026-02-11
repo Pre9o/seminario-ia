@@ -14,7 +14,9 @@ class Autoencoder:
         hidden_units=[128, 128, 128, 128, 128], 
         activation='relu', 
         learning_rate=0.001, 
-        mask_value=-999.0
+        mask_value=-999.0,
+        dropout_rate=0.3,
+        l2_reg=0.01
     ):
        
         self.shape = shape
@@ -23,7 +25,8 @@ class Autoencoder:
         self.activation = activation
         self.learning_rate = learning_rate
         self.mask_value = mask_value
-        
+        self.dropout_rate = dropout_rate
+        self.l2_reg = l2_reg
         self.categorical_indices = categorical_indices if categorical_indices else []
         self.categorical_cardinalities = categorical_cardinalities if categorical_cardinalities else {}
         self.continuous_indices = [i for i in range(shape) if i not in self.categorical_indices]
@@ -44,10 +47,10 @@ class Autoencoder:
             encoder.add(keras.layers.Dense(
                 units, 
                 activation=self.activation, 
-                kernel_regularizer=keras.regularizers.l2(0.01),
+                kernel_regularizer=keras.regularizers.l2(self.l2_reg),
                 name=f'encoder_dense_{idx+1}'
             ))
-            encoder.add(keras.layers.Dropout(0.3, name=f'encoder_dropout_{idx+1}'))
+            encoder.add(keras.layers.Dropout(self.dropout_rate, name=f'encoder_dropout_{idx+1}'))
         
         return encoder
     
