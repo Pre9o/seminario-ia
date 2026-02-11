@@ -23,7 +23,7 @@ def _encoder_custom_objects():
         'seminario_ia>CategoricalMap': CategoricalMap,
     }
 
-def calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=0.5):
+def calculate_ece(y_true, y_pred_proba, n_bins=10):
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
     bin_lowers = bin_boundaries[:-1]
     bin_uppers = bin_boundaries[1:]
@@ -34,7 +34,7 @@ def calculate_ece(y_true, y_pred_proba, n_bins=10, threshold=0.5):
         prop_in_bin = np.mean(in_bin)
         
         if prop_in_bin > 0:
-            accuracy_in_bin = np.mean(y_true[in_bin] == (y_pred_proba[in_bin] >= threshold).astype(int))
+            accuracy_in_bin = np.mean(y_true[in_bin])
             avg_confidence_in_bin = np.mean(y_pred_proba[in_bin])
             ece += np.abs(accuracy_in_bin - avg_confidence_in_bin) * prop_in_bin
     
