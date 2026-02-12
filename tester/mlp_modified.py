@@ -51,11 +51,26 @@ class MacroF1Callback(keras.callbacks.Callback):
         super().__init__()
         self.validation_data = validation_data
         self.val_f1_macro = []
+
+    def find_best_threshold(self, y_true, y_proba):
+        thresholds = np.linspace(0.0, 1.0, 101)
+        best_threshold = 0.5
+        best_score = -1.0
+
+        for threshold in thresholds:
+            y_pred = (y_proba > threshold).astype(int).flatten()
+            score = f1_score(y_true, y_pred, average='macro', zero_division=0)
+            if score > best_score:
+                best_score = score
+                best_threshold = threshold
+
+        return best_threshold
     
     def on_epoch_end(self, epoch, logs=None):
         X_val, y_val = self.validation_data
         y_pred_proba = self.model.predict(X_val, verbose=0)
-        y_pred = (y_pred_proba > 0.5).astype(int).flatten()
+        best_threshold = self.find_best_threshold(y_val, y_pred_proba)
+        y_pred = (y_pred_proba > best_threshold).astype(int).flatten()
         y_true = y_val.values if hasattr(y_val, 'values') else y_val
         
         f1_macro = f1_score(y_true, y_pred, average='macro', zero_division=0)
@@ -113,6 +128,7 @@ class MLP:
         else:
             self.model.add(keras.layers.InputLayer(input_shape=(self.shape,), name='input_layer'))
             for idx, neurons in enumerate(layers):
+                current_dropout = dropout_rate[idx] if isinstance(dropout_rate, (list, tuple, np.ndarray)) else dropout_rate
                 self.model.add(
                     keras.layers.Dense(
                         neurons,
@@ -120,7 +136,7 @@ class MLP:
                         name=f'camada_oculta_{idx+1}_{activation}'
                     )
                 )
-                self.model.add(keras.layers.Dropout(dropout_rate, name=f'dropout_{idx+1}'))
+                self.model.add(keras.layers.Dropout(current_dropout, name=f'dropout_{idx+1}'))
 
         if pre_trained_mlp is None:
             self.model.add(keras.layers.Dense(1, activation='sigmoid', name='camada_saida_sigmoid'))
@@ -189,7 +205,9 @@ class MLP:
         early_stopping = EarlyStopping(
             monitor='val_auc',
             patience=50,
-            restore_best_weights=False
+            restore_best_weights=False,
+            mode='max',
+            verbose=1
         )
 
         macro_f1_callback = MacroF1Callback(

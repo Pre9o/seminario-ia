@@ -51,6 +51,17 @@ def build_hidden_layers_from_params(best_params, *, min_neurons=4):
     return layers
 
 
+def sample_dropout_rates(trial, n_layers, *, min_rate=0.0, max_rate=0.5, step=0.1):
+    return [trial.suggest_float(f'dropout_{i}', min_rate, max_rate, step=step) for i in range(1, n_layers + 1)]
+
+
+def build_dropout_rates_from_params(best_params, n_layers, *, default_rate=0.0):
+    rates = []
+    for i in range(1, n_layers + 1):
+        rates.append(best_params.get(f'dropout_{i}', default_rate))
+    return rates
+
+
 def calculate_ece(y_true, y_pred_proba, n_bins=10):
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
     bin_lowers = bin_boundaries[:-1]
@@ -78,11 +89,10 @@ def compute_class_weight(y):
     return {0: total / (2.0 * counts[0]), 1: total / (2.0 * counts[1])}
 
 
-def find_best_threshold(y_true, y_proba, thresholds=None):
-    y_true = np.asarray(y_true).astype(int)
-    y_proba = np.asarray(y_proba).astype(float)
-    if thresholds is None:
-        thresholds = np.linspace(0.0, 1.0, 101)
+def find_best_threshold(y_true, y_proba):
+    # y_true = np.asarray(y_true).astype(int)
+    # y_proba = np.asarray(y_proba).astype(float)
+    thresholds = np.linspace(0.0, 1.0, 101)
 
     best_threshold = 0.5
     best_score = -1.0
@@ -101,13 +111,13 @@ def objective(trial, dataset_path, target_column):
 
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
     hidden_layers = sample_hidden_layers(trial, max_layers=5, min_neurons=4)
-    dropout_rate = trial.suggest_float('dropout_rate', 0.0, 0.5, step=0.1)
+    dropout_rates = sample_dropout_rates(trial, len(hidden_layers), min_rate=0.0, max_rate=0.5, step=0.1)
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
     epochs = trial.suggest_int('epochs', 50, 1000, step=50)
     
     try:
-        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate)
+        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rates)
         mlp.compile(learning_rate=learning_rate, weight_decay=weight_decay)
         class_weight = compute_class_weight(dataset.target_train.values)
         mlp.train(dataset, epochs=epochs, batch_size=batch_size, verbose=0, plot_path=None, class_weight=class_weight)
@@ -153,7 +163,7 @@ def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
 def train_and_evaluate(study, dataset, result_dir, n_runs):
     best_params = study.best_params
     hidden_layers = build_hidden_layers_from_params(best_params, min_neurons=4)
-    dropout_rate = best_params.get('dropout_rate', 0.0)
+    dropout_rates = build_dropout_rates_from_params(best_params, len(hidden_layers), default_rate=0.0)
 
     all_results = []
     roc_tprs = []
@@ -174,7 +184,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         f.write(f"class_weight: {class_weight}\n")
 
     for run_idx in range(n_runs):
-        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate)
+        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rates)
         mlp.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
         
         mlp.train(
