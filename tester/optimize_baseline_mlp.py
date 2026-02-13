@@ -107,7 +107,7 @@ def find_best_threshold(y_true, y_proba):
 
 
 def objective(trial, dataset_path, target_column):
-    dataset = Dataset(dataset_path, target_column)
+    dataset = Dataset(dataset_path=dataset_path, target_column=target_column)
 
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
     hidden_layers = sample_hidden_layers(trial, max_layers=5, min_neurons=4)
@@ -300,7 +300,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
 
 if __name__ == "__main__":
     args = ArgumentParser()
-    args.add_argument('--dataset_name', type=str, default='age_adults.csv', help='File name of the dataset (e.g., age_adults.csv)')
+    args.add_argument('--dataset_name', type=str, default='age_adults', help='File name of the dataset (e.g., age_adults.csv)')
     args.add_argument('--target_column', type=str, default='CKD progression', help='Name of the target column in the dataset')
     args.add_argument('--n_trials', type=int, default=20, help='Number of trials for optimization')
     args.add_argument('--load_study', action='store_true', help='Load existing study')
@@ -312,8 +312,10 @@ if __name__ == "__main__":
     dataset_base = args.dataset_name.replace('.csv', '')
     result_dir = os.path.join('results', 'baseline', f'{dataset_base}_{timestamp}')
     os.makedirs(result_dir, exist_ok=True)
+
+    dataset_folder_name = args.dataset_name.split('_')[0]
     
-    dataset_path = f'datasets/dataset_filled_boruta_{args.dataset_name}'
+    dataset_path = f'datasets_processed/{dataset_folder_name}/{args.dataset_name}'
     dataset = Dataset(dataset_path, args.target_column)
 
     if args.load_study:

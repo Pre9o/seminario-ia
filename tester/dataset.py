@@ -9,10 +9,10 @@ RANDOM_STATE=42
 TEST_SIZE=0.2
 
 class Dataset:
-    def __init__(self, folder_name, dataset_name, target_column=None):
-        self.train = pd.read_csv(f"{folder_name}/{dataset_name}/train.csv")
-        self.validation = pd.read_csv(f"{folder_name}/{dataset_name}/val.csv")
-        self.test = pd.read_csv(f"{folder_name}/{dataset_name}/test.csv")
+    def __init__(self, dataset_path, target_column=None):
+        self.train = pd.read_csv(f"{dataset_path}/train.csv")
+        self.validation = pd.read_csv(f"{dataset_path}/val.csv")
+        self.test = pd.read_csv(f"{dataset_path}/test.csv")
 
         self.features_train = self.train.drop(columns=[target_column])
         self.target_train = self.train[target_column]
