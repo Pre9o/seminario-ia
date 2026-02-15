@@ -50,17 +50,14 @@ def build_hidden_layers_from_params(best_params, *, min_neurons=4):
 
     return layers
 
-
 def sample_dropout_rates(trial, n_layers, *, min_rate=0.0, max_rate=0.5, step=0.1):
     return [trial.suggest_float(f'dropout_{i}', min_rate, max_rate, step=step) for i in range(1, n_layers + 1)]
-
 
 def build_dropout_rates_from_params(best_params, n_layers, *, default_rate=0.0):
     rates = []
     for i in range(1, n_layers + 1):
         rates.append(best_params.get(f'dropout_{i}', default_rate))
     return rates
-
 
 def calculate_ece(y_true, y_pred_proba, n_bins=10):
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
@@ -79,7 +76,6 @@ def calculate_ece(y_true, y_pred_proba, n_bins=10):
     
     return ece
 
-
 def compute_class_weight(y):
     y = np.asarray(y).astype(int)
     counts = np.bincount(y, minlength=2)
@@ -87,7 +83,6 @@ def compute_class_weight(y):
         return None
     total = counts.sum()
     return {0: total / (2.0 * counts[0]), 1: total / (2.0 * counts[1])}
-
 
 def find_best_threshold(y_true, y_proba):
     # y_true = np.asarray(y_true).astype(int)
@@ -104,7 +99,6 @@ def find_best_threshold(y_true, y_proba):
             best_threshold = t
 
     return best_threshold, best_score
-
 
 def objective(trial, dataset_path, target_column):
     dataset = Dataset(dataset_path=dataset_path, target_column=target_column)
@@ -181,6 +175,7 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         for key, value in best_params.items():
             f.write(f"{key}: {value}\n")
         f.write(f"hidden_layers: {hidden_layers}\n")
+        f.write(f"dropout_rates: {dropout_rates}\n")
         f.write(f"class_weight: {class_weight}\n")
 
     for run_idx in range(n_runs):

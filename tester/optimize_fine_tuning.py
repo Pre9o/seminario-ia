@@ -67,7 +67,6 @@ def calculate_ece(y_true, y_pred_proba, n_bins=10):
     
     return ece
 
-
 def compute_class_weight(y):
     y = np.asarray(y).astype(int)
     counts = np.bincount(y, minlength=2)
@@ -76,12 +75,10 @@ def compute_class_weight(y):
     total = counts.sum()
     return {0: total / (2.0 * counts[0]), 1: total / (2.0 * counts[1])}
 
-
 def find_best_threshold(y_true, y_proba, thresholds=None):
-    y_true = np.asarray(y_true).astype(int)
-    y_proba = np.asarray(y_proba).astype(float)
-    if thresholds is None:
-        thresholds = np.linspace(0.0, 1.0, 101)
+    # y_true = np.asarray(y_true).astype(int)
+    # y_proba = np.asarray(y_proba).astype(float)
+    thresholds = np.linspace(0.0, 1.0, 101)
 
     best_threshold = 0.5
     best_score = -1.0
@@ -94,18 +91,17 @@ def find_best_threshold(y_true, y_proba, thresholds=None):
 
     return best_threshold, best_score
 
-
 def objective(trial, source_model_path, dataset_path, target_column, freeze_layers):
     dataset = Dataset(dataset_path, target_column)
     pre_trained_model = keras.models.load_model(source_model_path)
 
-    weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
+    weight_decay = trial.suggest_float('weight_decay', 1e-8, 1e-2, log=True)
     if freeze_layers:
-        learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
+        learning_rate = trial.suggest_float('learning_rate', 1e-9, 1e-2, log=True)
     else:
-        learning_rate = trial.suggest_float('learning_rate', 1e-7, 1e-3, log=True)
+        learning_rate = trial.suggest_float('learning_rate', 1e-9, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
-    epochs = trial.suggest_int('epochs', 50, 500, step=50)
+    epochs = trial.suggest_int('epochs', 50, 1000, step=50)
     
     try:
         mlp = MLP(shape=dataset.get_shape(), pre_trained_mlp=pre_trained_model, freeze_layers=freeze_layers)
@@ -124,7 +120,7 @@ def objective(trial, source_model_path, dataset_path, target_column, freeze_laye
         return val_f1
     except Exception as e:
         print(f"Trial failed with exception: {e}")
-
+        return 0.0
 
 def optimize_hyperparameters(dataset_path, source_model_path, freeze_layers, target_column, n_trials, result_dir):
     study = optuna.create_study(
@@ -154,7 +150,6 @@ def optimize_hyperparameters(dataset_path, source_model_path, freeze_layers, tar
 
 def train_and_evaluate(study, dataset, result_dir, n_runs, pre_trained_model_path=None, freeze_layers=False):
     best_params = study.best_params
-    hidden_layers = build_hidden_layers_from_params(best_params, min_neurons=4)
 
     all_results = []
     roc_tprs = []
@@ -171,7 +166,6 @@ def train_and_evaluate(study, dataset, result_dir, n_runs, pre_trained_model_pat
     with open(os.path.join(result_dir, 'best_hyperparameters.txt'), 'w') as f:
         for key, value in best_params.items():
             f.write(f"{key}: {value}\n")
-        f.write(f"hidden_layers: {hidden_layers}\n")
         f.write(f"class_weight: {class_weight}\n")
 
     for run_idx in range(n_runs):
@@ -309,7 +303,9 @@ if __name__ == "__main__":
     result_dir = os.path.join('results', 'fine_tuning', f'{dataset_base}_{timestamp}_{"freeze" if args.freeze_layers else "unfreeze"}')
     os.makedirs(result_dir, exist_ok=True)
     
-    dataset_path = f'datasets/dataset_filled_boruta_{args.dataset_name}'
+    dataset_folder_name = args.dataset_name.split('_')[0]
+    
+    dataset_path = f'datasets_processed/{dataset_folder_name}/{args.dataset_name}'
     dataset = Dataset(dataset_path, args.target_column)
 
     if args.load_study:

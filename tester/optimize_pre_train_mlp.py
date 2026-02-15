@@ -15,7 +15,7 @@ def sample_hidden_layers(trial, *, max_layers=5, first_layer_choices=None, min_n
     if first_layer_choices is None:
         first_layer_choices = [8, 16, 32, 64, 128]
 
-    n_layers = trial.suggest_int('n_layers', 1, max_layers)
+    n_layers = trial.suggest_int('n_layers', 2, max_layers)
     layer_1 = trial.suggest_categorical('layer_1', first_layer_choices)
     layers = [int(layer_1)]
 
@@ -32,7 +32,7 @@ def sample_hidden_layers(trial, *, max_layers=5, first_layer_choices=None, min_n
     return layers
 
 def build_hidden_layers_from_params(best_params, *, min_neurons=4):
-    n_layers = best_params.get('n_layers', 1)
+    n_layers = best_params.get('n_layers', 2)
     layer_1 = best_params.get('layer_1', 128)
 
     layers = [layer_1]
@@ -48,6 +48,15 @@ def build_hidden_layers_from_params(best_params, *, min_neurons=4):
         prev = nxt
 
     return layers
+
+def sample_dropout_rates(trial, n_layers, *, min_rate=0.0, max_rate=0.5, step=0.1):
+    return [trial.suggest_float(f'dropout_{i}', min_rate, max_rate, step=step) for i in range(1, n_layers + 1)]
+
+def build_dropout_rates_from_params(best_params, n_layers, *, default_rate=0.0):
+    rates = []
+    for i in range(1, n_layers + 1):
+        rates.append(best_params.get(f'dropout_{i}', default_rate))
+    return rates
 
 def calculate_ece(y_true, y_pred_proba, n_bins=10):
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
@@ -66,7 +75,6 @@ def calculate_ece(y_true, y_pred_proba, n_bins=10):
     
     return ece
 
-
 def compute_class_weight(y):
     y = np.asarray(y).astype(int)
     counts = np.bincount(y, minlength=2)
@@ -75,12 +83,10 @@ def compute_class_weight(y):
     total = counts.sum()
     return {0: total / (2.0 * counts[0]), 1: total / (2.0 * counts[1])}
 
-
 def find_best_threshold(y_true, y_proba, thresholds=None):
-    y_true = np.asarray(y_true).astype(int)
-    y_proba = np.asarray(y_proba).astype(float)
-    if thresholds is None:
-        thresholds = np.linspace(0.0, 1.0, 101)
+    # y_true = np.asarray(y_true).astype(int)
+    # y_proba = np.asarray(y_proba).astype(float)
+    thresholds = np.linspace(0.0, 1.0, 101)
 
     best_threshold = 0.5
     best_score = -1.0
@@ -89,24 +95,22 @@ def find_best_threshold(y_true, y_proba, thresholds=None):
         score = f1_score(y_true, y_pred, average='macro', zero_division=0)
         if score > best_score:
             best_score = score
-            best_threshold = float(t)
+            best_threshold = t
 
-    return best_threshold, float(best_score)
-
+    return best_threshold, best_score
 
 def objective(trial, dataset_path, target_column):
     dataset = Dataset(dataset_path, target_column)
     
-    l2_reg = trial.suggest_float('l2_reg', 1e-6, 1e-2, log=True)
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
     hidden_layers = sample_hidden_layers(trial, max_layers=5, min_neurons=4)
-    dropout_rate = trial.suggest_float('dropout_rate', 0.0, 0.5, step=0.1)
+    dropout_rates = sample_dropout_rates(trial, n_layers=len(hidden_layers), min_rate=0.0, max_rate=0.5, step=0.1)
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
-    epochs = trial.suggest_int('epochs', 50, 500, step=50)
+    epochs = trial.suggest_int('epochs', 50, 1000, step=50)
     
     try:
-        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate, l2_reg=l2_reg)
+        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rates)
         mlp.compile(learning_rate=learning_rate, weight_decay=weight_decay)
         class_weight = compute_class_weight(dataset.target_train.values)
         mlp.train(dataset, epochs=epochs, batch_size=batch_size, verbose=0, plot_path=None, class_weight=class_weight)
@@ -121,7 +125,6 @@ def objective(trial, dataset_path, target_column):
         return val_f1
     except Exception:
         return 0.0
-
 
 def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
     study = optuna.create_study(
@@ -152,9 +155,8 @@ def optimize_hyperparameters(dataset_path, target_column, n_trials, result_dir):
 def train_and_evaluate(study, dataset, result_dir, n_runs):
     best_params = study.best_params
     hidden_layers = build_hidden_layers_from_params(best_params, min_neurons=4)
-    dropout_rate = best_params.get('dropout_rate', 0.0)
-    l2_reg = best_params.get('l2_reg', 0.01)
-
+    dropout_rates = build_dropout_rates_from_params(best_params, n_layers=len(hidden_layers), default_rate=0.0)
+    
     all_results = []
     roc_tprs = []
     roc_aucs = []
@@ -171,10 +173,11 @@ def train_and_evaluate(study, dataset, result_dir, n_runs):
         for key, value in best_params.items():
             f.write(f"{key}: {value}\n")
         f.write(f"hidden_layers: {hidden_layers}\n")
+        f.write(f"dropout_rates: {dropout_rates}\n")
         f.write(f"class_weight: {class_weight}\n")
 
     for run_idx in range(n_runs):
-        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rate, l2_reg=l2_reg)
+        mlp = MLP(shape=dataset.get_shape(), layers=hidden_layers, dropout_rate=dropout_rates)
         mlp.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
         
         mlp.train(
@@ -303,8 +306,10 @@ if __name__ == "__main__":
     dataset_base = args.dataset_name.replace('.csv', '')
     result_dir = os.path.join('results', 'pre_train', f'{dataset_base}_{timestamp}')
     os.makedirs(result_dir, exist_ok=True)
+
+    dataset_folder_name = args.dataset_name.split('_')[0]
     
-    dataset_path = f'datasets/dataset_filled_boruta_{args.dataset_name}'
+    dataset_path = f'datasets_processed/{dataset_folder_name}/{args.dataset_name}'
     dataset = Dataset(dataset_path, args.target_column)
 
     if args.load_study:
