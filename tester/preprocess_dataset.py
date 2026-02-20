@@ -106,15 +106,20 @@ def pre_process_dataset(df_a, name_a, df_b, name_b, output_folder,
     unified_X_train = pd.concat([X_a_train, X_b_train], axis=0)
     unified_target = pd.concat([progression_a_train, progression_b_train], axis=0)
 
-    forest = RandomForestClassifier(n_jobs=-1, class_weight="balanced", max_depth=5)
+    forest = RandomForestClassifier(n_jobs=-1, max_depth=5)
     boruta_selector = BorutaPy(estimator=forest, n_estimators="auto", random_state=42)
     boruta_selector.fit(unified_X_train.values, unified_target.values)
 
     selected_features = unified_X_train.columns[boruta_selector.support_].tolist()
     selected_features = selected_features[:12]
     selected_features = [f for f in selected_features if f not in forbidden_features]
-    print("Selected features:", selected_features)
-    print("Feature ranking:", unified_X_train.columns[boruta_selector.ranking_].tolist())
+    print("Selected features:", selected_features[:12])
+
+    feature_ranking = sorted(
+        zip(unified_X_train.columns.tolist(), boruta_selector.ranking_.tolist()),
+        key=lambda x: x[1],
+    )
+    print("Feature ranking:", feature_ranking)
 
     X_a_train_selected = X_a_train[selected_features]
     X_a_test_selected = X_a_test[selected_features]
@@ -155,7 +160,7 @@ def main():
     ds = pd.read_csv("datasets/original/dataset.csv")
     target_progression = "CKD progression"
 
-    output_base = "datasets_processed"
+    output_base = "datasets_processed_2"
     os.makedirs(output_base, exist_ok=True)
 
     df_elderly, name_elderly, df_adults, name_adults = adults_and_elderly(ds)

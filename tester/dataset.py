@@ -23,7 +23,6 @@ class Dataset:
         self.features_test = self.test.drop(columns=[target_column])
         self.target_test = self.test[target_column]
 
-
     def __repr__(self):
         return (f"Dataset(shape={self.get_shape()})")
 
