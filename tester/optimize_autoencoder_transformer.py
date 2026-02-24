@@ -16,20 +16,24 @@ def objective(trial, dataset_path, target_column, categorical_indices, categoric
     mask_ratio = trial.suggest_float('mask_ratio', 0.3, 0.7)
     learning_rate = trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True)
     batch_size = trial.suggest_categorical('batch_size', [4, 8, 16, 32, 64])
-    epochs = trial.suggest_int('epochs', 50, 300, step=50)
+    epochs = trial.suggest_int('epochs', 50, 1000, step=50)
 
-    embed_dim = trial.suggest_categorical('embed_dim', [16, 32, 48, 64, 96, 128])
-    num_layers = trial.suggest_int('num_layers', 1, 4)
+    embed_dim = trial.suggest_categorical('embed_dim', [16, 32, 48, 64, 96, 128, 192, 256])
+    num_layers = trial.suggest_int('num_layers', 2, 5)
 
-    num_heads = trial.suggest_int('num_heads', 2, 8)
+    num_heads = trial.suggest_int('num_heads', 2, 16)
 
     if num_heads > embed_dim:
         return float('inf')
     if embed_dim % num_heads != 0:
         return float('inf')
 
+    head_dim = embed_dim // num_heads
+    if head_dim not in (2, 4, 8, 16, 32, 64, 128):
+        return float('inf')
+
     ff_dim = trial.suggest_categorical('ff_dim', [16, 32, 48, 64, 96, 128, 192, 256])
-    dropout = trial.suggest_float('dropout', 0.0, 0.3)
+    dropout = trial.suggest_float('dropout', 0.0, 0.5)
 
     try:
         autoencoder = AutoencoderTransformer(
@@ -201,12 +205,12 @@ def train_and_evaluate(study, dataset, categorical_indices, categorical_cardinal
 
 if __name__ == '__main__':
     args = ArgumentParser()
-    args.add_argument('--dataset_name', type=str, default='age_elderly.csv')
+    args.add_argument('--dataset_name', type=str, default='age_elderly')
     args.add_argument('--target_column', type=str, default='CKD progression')
     args.add_argument('--n_trials', type=int, default=20)
     args.add_argument('--load_study', action='store_true')
     args.add_argument('--study_path', type=str, default='')
-    args.add_argument('--n_runs', type=int, default=20)
+    args.add_argument('--n_runs', type=int, default=40)
     args = args.parse_args()
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -214,18 +218,20 @@ if __name__ == '__main__':
     result_dir = os.path.join('results', 'autoencoder_transformer', f'{dataset_base}_{timestamp}')
     os.makedirs(result_dir, exist_ok=True)
 
-    dataset_path = f'datasets/dataset_filled_boruta_{args.dataset_name}'
+    dataset_folder_name = args.dataset_name.split('_')[0]
+    
+    dataset_path = f'datasets_processed_3/{dataset_folder_name}/{args.dataset_name}'
     dataset = Dataset(dataset_path, args.target_column)
 
-    if args.dataset_name == 'age_elderly.csv':
-        categorical_indices = [1, 5, 6]
-        categorical_cardinalities = {1: 4, 5: 4, 6: 2}
-    elif args.dataset_name == 'etiology12.csv':
-        categorical_indices = [5, 6]
-        categorical_cardinalities = {5: 4, 6: 2}
+    if args.dataset_name == 'age_elderly':
+        categorical_indices = [0, 1, 2]
+        categorical_cardinalities = {0: 4, 1: 4, 2: 2}
+    elif args.dataset_name == 'etiology_12':
+        categorical_indices = [0, 1]
+        categorical_cardinalities = {0: 4, 1: 2}
     else:
-        categorical_indices = [2, 6]
-        categorical_cardinalities = {2: 4, 6: 2}
+        categorical_indices = [0, 1]
+        categorical_cardinalities = {0: 4, 1: 2}
 
     if args.load_study:
         study = joblib.load(args.study_path)
