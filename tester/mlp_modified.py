@@ -164,15 +164,15 @@ class MLP:
         return keras.Model(inputs=self.model.inputs, outputs=out, name=self.model.name)
 
     
-    def unfreeze_encoder(self, learning_rate=0.0001):
+    def unfreeze_encoder(self, learning_rate=0.0001, weight_decay=0.0001):
         for layer in self.model.layers:
             if layer.name == 'encoder':
                 layer.trainable = True
                 for sublayer in getattr(layer, "layers", []):
                     sublayer.trainable = True
 
-        self.model.summary()
-        self.compile(learning_rate=learning_rate)
+        # self.model.summary()
+        self.compile(learning_rate=learning_rate, weight_decay=weight_decay)
     
 
     def compile(self, loss=LOSS, learning_rate=LEARNING_RATE, weight_decay=WEIGHT_DECAY):
