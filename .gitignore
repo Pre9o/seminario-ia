@@ -213,3 +213,4 @@ tester/pretrained_encoder.keras
 *.txt 
 *.svg   
 *Zone.Identifier
+*.xlsx

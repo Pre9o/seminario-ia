@@ -4,23 +4,55 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import f1_score
 
-
 class MacroF1Callback(keras.callbacks.Callback):
-    def __init__(self, validation_data, threshold=0.5):
+    def __init__(self, validation_data):
         super().__init__()
         self.validation_data = validation_data
-        self.threshold = float(threshold)
         self.val_f1_macro = []
 
+    def find_best_threshold(self, y_true, y_proba):
+        thresholds = np.linspace(0.0, 1.0, 101)
+        best_threshold = 0.5
+        best_score = -1.0
+
+        for threshold in thresholds:
+            y_pred = (y_proba > threshold).astype(int).flatten()
+            score = f1_score(y_true, y_pred, average='macro', zero_division=0)
+            if score > best_score:
+                best_score = score
+                best_threshold = threshold
+
+        return best_threshold
+    
     def on_epoch_end(self, epoch, logs=None):
         X_val, y_val = self.validation_data
-        y_pred_proba = self.model.predict(X_val, verbose=0).flatten()
-        y_pred = (y_pred_proba >= self.threshold).astype(int)
+        y_pred_proba = self.model.predict(X_val, verbose=0)
+        best_threshold = self.find_best_threshold(y_val, y_pred_proba)
+        y_pred = (y_pred_proba > best_threshold).astype(int).flatten()
         y_true = y_val.values if hasattr(y_val, 'values') else y_val
+        
         f1_macro = f1_score(y_true, y_pred, average='macro', zero_division=0)
         self.val_f1_macro.append(f1_macro)
-        if logs is not None:
-            logs['val_f1_macro'] = f1_macro
+        logs['val_f1_macro'] = f1_macro
+        
+
+class RestoreBestF1(tf.keras.callbacks.Callback):
+    def __init__(self):
+        super().__init__()
+        self.best_f1 = -np.inf
+        self.best_weights = None
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        current_f1 = logs.get("val_f1_macro")
+
+        if current_f1 is not None and current_f1 > self.best_f1:
+            self.best_f1 = current_f1
+            self.best_weights = self.model.get_weights()
+
+    def on_train_end(self, logs=None):
+        if self.best_weights is not None:
+            self.model.set_weights(self.best_weights)
 
 
 class TransformerClassifier:
@@ -29,7 +61,7 @@ class TransformerClassifier:
         shape,
         pretrained_encoder=None,
         encoder_path=None,
-        hidden_units=(128, 64),
+        hidden_units=16,
         dropout=0.2,
         learning_rate=1e-3,
         weight_decay=0.0,
@@ -53,7 +85,7 @@ class TransformerClassifier:
 
         self.model = self._build_model()
         self.history = None
-        self.compile()
+        # self.compile()
 
     def _build_model(self):
         inputs = keras.Input(shape=(self.shape,), name='input')
@@ -65,9 +97,8 @@ class TransformerClassifier:
         else:
             x = keras.layers.Flatten()(x)
 
-        for i, units in enumerate(self.hidden_units):
-            x = keras.layers.Dense(int(units), activation='relu', name=f'head_dense_{i + 1}')(x)
-            x = keras.layers.Dropout(self.dropout, name=f'head_dropout_{i + 1}')(x)
+        x = keras.layers.Dense(int(self.hidden_units), activation='relu', name=f'head_dense_1')(x)
+        x = keras.layers.Dropout(self.dropout, name=f'head_dropout_1')(x)
 
         outputs = keras.layers.Dense(1, activation='sigmoid', name='output')(x)
         return keras.Model(inputs=inputs, outputs=outputs, name='transformer_classifier')
@@ -84,11 +115,10 @@ class TransformerClassifier:
             for layer in self.encoder.layers:
                 layer.trainable = True
 
-    def compile(self, learning_rate=None):
-        lr = self.learning_rate if learning_rate is None else float(learning_rate)
+    def compile(self, learning_rate=None, weight_decay=None):
         self.model.compile(
             loss=self.loss,
-            optimizer=keras.optimizers.AdamW(learning_rate=lr, weight_decay=self.weight_decay),
+            optimizer=keras.optimizers.AdamW(learning_rate=learning_rate, weight_decay=weight_decay),
             metrics=[
                 'accuracy',
                 keras.metrics.AUC(name='auc'),
@@ -100,15 +130,18 @@ class TransformerClassifier:
 
     def train(self, dataset, epochs=200, batch_size=32, verbose=1, plot_path=None, class_weight=None):
         early_stopping = keras.callbacks.EarlyStopping(
-            monitor='val_loss',
-            patience=10,
-            restore_best_weights=True,
+            monitor='val_auc',
+            patience=50,
+            mode='max',
+            restore_best_weights=False,
+            verbose=1,
         )
 
         macro_f1_callback = MacroF1Callback(
             validation_data=(dataset.features_validation, dataset.target_validation),
-            threshold=self.threshold,
         )
+
+        restore_f1_callback = RestoreBestF1()
 
         y_train = dataset.target_train.astype('float32')
         y_val = dataset.target_validation.astype('float32')
@@ -118,7 +151,7 @@ class TransformerClassifier:
             y_train,
             epochs=epochs,
             validation_data=(dataset.features_validation, y_val),
-            callbacks=[macro_f1_callback, early_stopping],
+            callbacks=[macro_f1_callback, early_stopping, restore_f1_callback],
             batch_size=batch_size,
             verbose=verbose,
             class_weight=class_weight,

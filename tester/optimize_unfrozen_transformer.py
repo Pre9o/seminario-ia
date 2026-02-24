@@ -51,10 +51,7 @@ def compute_class_weight(y):
 
 
 def find_best_threshold(y_true, y_proba, thresholds=None):
-    y_true = np.asarray(y_true).astype(int)
-    y_proba = np.asarray(y_proba).astype(float)
-    if thresholds is None:
-        thresholds = np.linspace(0.0, 1.0, 101)
+    thresholds = np.linspace(0.0, 1.0, 101)
 
     best_threshold = 0.5
     best_score = -1.0
