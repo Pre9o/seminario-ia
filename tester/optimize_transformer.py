@@ -51,17 +51,6 @@ def find_best_threshold(y_true, y_proba):
 
     return best_threshold, float(best_score)
 
-
-def set_global_seed(seed):
-    seed = int(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    try:
-        tf.keras.utils.set_random_seed(seed)
-    except Exception:
-        tf.random.set_seed(seed)
-
-
 def get_categorical_info(dataset_base_folder):
     if dataset_base_folder == 'age':
         return [0, 1], {0: 4, 1: 2}
@@ -86,7 +75,7 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
     if num_heads > embed_dim or embed_dim % num_heads != 0:
         return 0.0
     
-    ff_dim = trial.suggest_categorical('ff_dim', [16, 32, 48, 64, 96, 128, 192, 256])
+    ff_dim = trial.suggest_categorical('ff_dim', [16, 32, 48, 64, 96, 128])
     ae_dropout = trial.suggest_float('ae_dropout', 0.0, 0.3)
 
     autoencoder = AutoencoderTransformer(
@@ -105,16 +94,19 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
 
     autoencoder.train(dataset_source, epochs=ae_epochs, batch_size=ae_batch_size, verbose=0)
 
+    ft_weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
     ft_learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True)
     ft_batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
     ft_epochs = trial.suggest_int('epochs', 50, 500, step=50)
+    ft_hidden_units = trial.suggest_categorical('hidden_units', [4, 8, 16, 32, 64])
+    ft_dropout = trial.suggest_float('dropout', 0.0, 0.5)
 
-    classifier = TransformerClassifier(shape=dataset_target.get_shape(), pretrained_encoder=autoencoder.encoder)
+    classifier = TransformerClassifier(shape=dataset_target.get_shape(), pretrained_encoder=autoencoder.encoder, hidden_units=ft_hidden_units, dropout=ft_dropout, learning_rate=ft_learning_rate, weight_decay=ft_weight_decay)
     if training_type == 'unfrozen':
         classifier.unfreeze_encoder()
     else:
         classifier.freeze_encoder()
-    classifier.compile(learning_rate=ft_learning_rate)
+    classifier.compile(learning_rate=ft_learning_rate, weight_decay=ft_weight_decay)
     class_weight = compute_class_weight(dataset_target.target_train.values)
     classifier.train(dataset_target, epochs=ft_epochs, batch_size=ft_batch_size, verbose=0, plot_path=None, class_weight=class_weight)
 
@@ -218,8 +210,6 @@ def train_and_evaluate(study, dataset_source, dataset_target, training_type, dat
     categorical_indices, categorical_cardinalities = get_categorical_info(dataset_base_folder)
 
     for run_idx in range(n_runs):
-        set_global_seed(run_idx)
-
         autoencoder = AutoencoderTransformer(
             shape=dataset_source.get_shape(),
             categorical_indices=categorical_indices,
@@ -249,12 +239,12 @@ def train_and_evaluate(study, dataset_source, dataset_target, training_type, dat
             best_ae_loss = ae_metrics['total_loss']
             autoencoder.save_encoder(os.path.join(result_dir, 'best_encoder.keras'))
 
-        classifier = TransformerClassifier(shape=dataset_target.get_shape(), pretrained_encoder=autoencoder.encoder)
+        classifier = TransformerClassifier(shape=dataset_target.get_shape(), pretrained_encoder=autoencoder.encoder, hidden_units=best_params['ft_hidden_units'], dropout=best_params['ft_dropout'], learning_rate=best_params['learning_rate'], weight_decay=best_params['ft_weight_decay'])
         if training_type == 'unfrozen':
             classifier.unfreeze_encoder()
         else:
             classifier.freeze_encoder()
-        classifier.compile(learning_rate=best_params['learning_rate'])
+        classifier.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['ft_weight_decay'])
 
         classifier.train(
             dataset_target,
