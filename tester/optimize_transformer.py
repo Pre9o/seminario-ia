@@ -65,9 +65,9 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
     categorical_indices, categorical_cardinalities = get_categorical_info(dataset_base_folder)
 
     mask_ratio = trial.suggest_float('mask_ratio', 0.3, 0.7)
-    ae_learning_rate = trial.suggest_float('ae_learning_rate', 1e-4, 1e-2, log=True)
+    ae_learning_rate = trial.suggest_float('ae_learning_rate', 1e-7, 1e-2, log=True)
     ae_batch_size = trial.suggest_categorical('ae_batch_size', [4, 8, 16, 32, 64])
-    ae_epochs = trial.suggest_int('ae_epochs', 50, 300, step=50)
+    ae_epochs = trial.suggest_int('ae_epochs', 50, 1000, step=50)
     embed_dim = trial.suggest_categorical('embed_dim', [16, 32, 48, 64, 96, 128])
     num_layers = trial.suggest_int('num_layers', 1, 4)
     num_heads = trial.suggest_int('num_heads', 2, 8)
@@ -76,7 +76,7 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
         return 0.0
     
     ff_dim = trial.suggest_categorical('ff_dim', [16, 32, 48, 64, 96, 128])
-    ae_dropout = trial.suggest_float('ae_dropout', 0.0, 0.3)
+    ae_dropout = trial.suggest_float('ae_dropout', 0.0, 0.5)
 
     autoencoder = AutoencoderTransformer(
         shape=dataset_source.get_shape(),
