@@ -2,8 +2,8 @@ import os
 import optuna
 from optuna.pruners import MedianPruner
 from dataset import Dataset
-from transformer_classifier import TransformerClassifier
-from autoencoder_transformer import AutoencoderTransformer, FeatureSlice, TokenSlice, CategoricalMap
+from transformer_classifier import TransformerClassifier, ExtractCLSToken
+from autoencoder_transformer import AutoencoderTransformer, FeatureSlice, TokenSlice, CategoricalMap, CLSToken
 from sklearn.metrics import roc_curve, auc, confusion_matrix, brier_score_loss, f1_score, accuracy_score, precision_score, recall_score
 from tensorflow import keras
 import numpy as np
@@ -22,10 +22,28 @@ def _encoder_custom_objects():
         'FeatureSlice': FeatureSlice,
         'TokenSlice': TokenSlice,
         'CategoricalMap': CategoricalMap,
+        'CLSToken': CLSToken,
+        'ExtractCLSToken': ExtractCLSToken,
         'seminario_ia>FeatureSlice': FeatureSlice,
         'seminario_ia>TokenSlice': TokenSlice,
         'seminario_ia>CategoricalMap': CategoricalMap,
+        'seminario_ia>CLSToken': CLSToken,
     }
+
+
+class OptunaPruningCallback(keras.callbacks.Callback):
+    def __init__(self, trial, monitor='val_f1_macro'):
+        super().__init__()
+        self.trial = trial
+        self.monitor = monitor
+
+    def on_epoch_end(self, epoch, logs=None):
+        current = (logs or {}).get(self.monitor)
+        if current is None:
+            return
+        self.trial.report(float(current), epoch)
+        if self.trial.should_prune():
+            raise optuna.TrialPruned()
 
 
 def compute_class_weight(y):
@@ -94,10 +112,10 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
 
     autoencoder.train(dataset_source, epochs=ae_epochs, batch_size=ae_batch_size, verbose=0)
 
-    ft_weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
-    ft_learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True)
-    ft_batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
-    ft_epochs = trial.suggest_int('epochs', 50, 500, step=50)
+    ft_weight_decay = trial.suggest_float('weight_decay', 1e-7, 1e-2, log=True)
+    ft_learning_rate = trial.suggest_float('learning_rate', 1e-7, 1e-2, log=True)
+    ft_batch_size = trial.suggest_categorical('batch_size', [4, 8, 16, 32, 64])
+    ft_epochs = trial.suggest_int('epochs', 50, 1000, step=50)
     ft_hidden_units = trial.suggest_categorical('hidden_units', [4, 8, 16, 32, 64])
     ft_dropout = trial.suggest_float('dropout', 0.0, 0.5)
 
@@ -108,23 +126,29 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
         classifier.freeze_encoder()
     classifier.compile(learning_rate=ft_learning_rate, weight_decay=ft_weight_decay)
     class_weight = compute_class_weight(dataset_target.target_train.values)
+
+    # pruning_callback = OptunaPruningCallback(trial, monitor='val_auc')
     classifier.train(dataset_target, epochs=ft_epochs, batch_size=ft_batch_size, verbose=0, plot_path=None, class_weight=class_weight)
 
     y_val_true = dataset_target.target_validation.values
     y_val_proba = classifier.model.predict(dataset_target.features_validation, verbose=0).flatten()
     _, val_f1 = find_best_threshold(y_val_true, y_val_proba)
 
-    if trial.should_prune():
-        raise optuna.TrialPruned()
+    del autoencoder
+    del classifier
+    tf.keras.backend.clear_session()
 
     return val_f1
 
 
 def optimize_hyperparameters(dataset_source, dataset_target, training_type, dataset_base_folder, n_trials, result_dir):
+    sampler = optuna.samplers.TPESampler()
+
     study = optuna.create_study(
         study_name=f'{training_type}_transformer_optimization',
         direction='maximize',
-        pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10)
+        pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10),
+        sampler=sampler,
     )
 
     study.optimize(
@@ -244,7 +268,7 @@ def train_and_evaluate(study, dataset_source, dataset_target, training_type, dat
             classifier.unfreeze_encoder()
         else:
             classifier.freeze_encoder()
-        classifier.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['ft_weight_decay'])
+        classifier.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
 
         classifier.train(
             dataset_target,
@@ -303,6 +327,10 @@ def train_and_evaluate(study, dataset_source, dataset_target, training_type, dat
             f.write("confusion_matrix:\n")
             f.write(np.array2string(conf_matrix))
             f.write("\n\n")
+
+        del autoencoder
+        del classifier
+        tf.keras.backend.clear_session()
 
     if roc_tprs:
         tprs = np.vstack(roc_tprs)
@@ -390,9 +418,37 @@ def compute_shap_values(model, dataset, result_dir):
     X_test = dataset.features_test.values if hasattr(dataset.features_test, 'values') else dataset.features_test
     feature_names = dataset.features_train.columns.tolist() if hasattr(dataset.features_train, 'columns') else [f'feature_{i}' for i in range(X_train.shape[1])]
 
-    background = X_train[np.random.choice(X_train.shape[0], min(100, X_train.shape[0]), replace=False)]
-    explainer = shap.DeepExplainer(model, background)
-    shap_values = explainer.shap_values(X_test)
+    rng = np.random.default_rng(0)
+
+    background_size = min(100, X_train.shape[0])
+    test_size = min(500, X_test.shape[0])
+    background = X_train[rng.choice(X_train.shape[0], background_size, replace=False)]
+    X_test_sample = X_test[rng.choice(X_test.shape[0], test_size, replace=False)]
+
+    explainer_name = 'DeepExplainer'
+    try:
+        explainer = shap.DeepExplainer(model, background)
+        shap_values = explainer.shap_values(X_test_sample)
+    except Exception:
+        explainer_name = 'GradientExplainer'
+        try:
+            explainer = shap.GradientExplainer(model, background)
+            shap_values = explainer.shap_values(X_test_sample)
+        except Exception:
+            explainer_name = 'PermutationExplainer'
+
+            def _predict(x):
+                y = model(x, training=False)
+                return np.asarray(y)
+
+            masker = shap.maskers.Independent(background)
+            explanation = shap.PermutationExplainer(_predict, masker)(X_test_sample)
+            shap_values = explanation.values
+
+    with open(os.path.join(result_dir, 'shap_explainer.txt'), 'w') as f:
+        f.write(f"explainer: {explainer_name}\n")
+        f.write(f"background_size: {background_size}\n")
+        f.write(f"test_sample_size: {test_size}\n")
 
     if isinstance(shap_values, list):
         shap_values = shap_values[0]
@@ -406,13 +462,13 @@ def compute_shap_values(model, dataset, result_dir):
     feature_importance.to_csv(os.path.join(result_dir, 'shap_feature_importance.csv'), index=False)
 
     plt.figure(figsize=(10, 6))
-    shap.summary_plot(shap_values, X_test, feature_names=feature_names, show=False)
+    shap.summary_plot(shap_values, X_test_sample, feature_names=feature_names, show=False)
     plt.tight_layout()
     plt.savefig(os.path.join(result_dir, 'shap_summary.svg'), dpi=300, bbox_inches='tight')
     plt.close()
 
     plt.figure(figsize=(10, 6))
-    shap.summary_plot(shap_values, X_test, feature_names=feature_names, plot_type='bar', show=False)
+    shap.summary_plot(shap_values, X_test_sample, feature_names=feature_names, plot_type='bar', show=False)
     plt.tight_layout()
     plt.savefig(os.path.join(result_dir, 'shap_bar.svg'), dpi=300, bbox_inches='tight')
     plt.close()
