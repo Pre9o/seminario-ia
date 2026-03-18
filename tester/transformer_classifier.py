@@ -4,6 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import f1_score
 
+
+class ExtractCLSToken(keras.layers.Layer):
+    def call(self, inputs):
+        return inputs[:, 0, :]
+
+    def get_config(self):
+        return super().get_config()
+
 class MacroF1Callback(keras.callbacks.Callback):
     def __init__(self, validation_data):
         super().__init__()
@@ -24,7 +32,7 @@ class MacroF1Callback(keras.callbacks.Callback):
 
         return best_threshold
     
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_end(self, logs=None):
         X_val, y_val = self.validation_data
         y_pred_proba = self.model.predict(X_val, verbose=0)
         best_threshold = self.find_best_threshold(y_val, y_pred_proba)
@@ -42,7 +50,7 @@ class RestoreBestF1(tf.keras.callbacks.Callback):
         self.best_f1 = -np.inf
         self.best_weights = None
 
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_end(self, logs=None):
         logs = logs or {}
         current_f1 = logs.get("val_f1_macro")
 
@@ -91,7 +99,7 @@ class TransformerClassifier:
         inputs = keras.Input(shape=(self.shape,), name='input')
         x = self.encoder(inputs)
         if len(x.shape) == 3:
-            x = keras.layers.GlobalAveragePooling1D()(x)
+            x = ExtractCLSToken(name='cls_extract')(x)
         elif len(x.shape) == 2:
             x = x
         else:
@@ -128,12 +136,12 @@ class TransformerClassifier:
             ],
         )
 
-    def train(self, dataset, epochs=200, batch_size=32, verbose=1, plot_path=None, class_weight=None):
+    def train(self, dataset, epochs=200, batch_size=32, verbose=1, plot_path=None, class_weight=None, extra_callbacks=None):
         early_stopping = keras.callbacks.EarlyStopping(
-            monitor='val_auc',
+            monitor='val_f1_macro',
             patience=50,
             mode='max',
-            restore_best_weights=False,
+            restore_best_weights=True,
             verbose=1,
         )
 
@@ -141,7 +149,11 @@ class TransformerClassifier:
             validation_data=(dataset.features_validation, dataset.target_validation),
         )
 
-        restore_f1_callback = RestoreBestF1()
+        # restore_f1_callback = RestoreBestF1()
+
+        callbacks = [macro_f1_callback, early_stopping] 
+        if extra_callbacks:
+            callbacks.extend(extra_callbacks)
 
         y_train = dataset.target_train.astype('float32')
         y_val = dataset.target_validation.astype('float32')
@@ -151,7 +163,7 @@ class TransformerClassifier:
             y_train,
             epochs=epochs,
             validation_data=(dataset.features_validation, y_val),
-            callbacks=[macro_f1_callback, early_stopping, restore_f1_callback],
+            callbacks=callbacks,
             batch_size=batch_size,
             verbose=verbose,
             class_weight=class_weight,
@@ -159,6 +171,7 @@ class TransformerClassifier:
 
         self.history = history.history
         self.history['val_f1_macro'] = macro_f1_callback.val_f1_macro
+
 
         if plot_path is not None:
             self.plot_training_curves(plot_path)
