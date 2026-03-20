@@ -11,9 +11,9 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 
 
-def sample_hidden_layers(trial, *, max_layers=5, first_layer_choices=None, min_neurons=4):
+def sample_hidden_layers(trial, *, max_layers=3, first_layer_choices=None, min_neurons=4):
     if first_layer_choices is None:
-        first_layer_choices = [8, 16, 32, 64, 128]
+        first_layer_choices = [8, 16, 32, 64]
 
     n_layers = trial.suggest_int('n_layers', 2, max_layers)
     layer_1 = trial.suggest_categorical('layer_1', first_layer_choices)

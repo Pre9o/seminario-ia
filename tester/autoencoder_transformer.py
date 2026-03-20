@@ -4,6 +4,35 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+class MaskedDataSequence(keras.utils.Sequence):
+    def __init__(self, data_array, autoencoder, batch_size, shuffle=True):
+        self.data_array = data_array.copy()
+        self.autoencoder = autoencoder
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.indices = np.arange(len(data_array))
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+
+    def __len__(self):
+        return int(np.ceil(len(self.data_array) / self.batch_size))
+
+    def __getitem__(self, idx):
+        start = idx * self.batch_size
+        end = min(start + self.batch_size, len(self.indices))
+        batch_indices = self.indices[start:end]
+        batch_data = self.data_array[batch_indices]
+
+        masked_batch, _ = self.autoencoder.create_masked_data(batch_data)
+        targets = self.autoencoder.prepare_targets(batch_data)
+
+        return masked_batch, targets
+
+    def on_epoch_end(self):
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+
+
 def _register_serializable(package):
     def decorator(cls):
         if hasattr(keras, 'saving') and hasattr(keras.saving, 'register_keras_serializable'):
@@ -66,6 +95,32 @@ class CategoricalMap(keras.layers.Layer):
     def get_config(self):
         cfg = super().get_config()
         cfg.update({'min_value': self.min_value, 'n_classes': self.n_classes})
+        return cfg
+
+
+@_register_serializable(package='seminario_ia')
+class CLSToken(keras.layers.Layer):
+    def __init__(self, embed_dim, **kwargs):
+        super().__init__(**kwargs)
+        self.embed_dim = int(embed_dim)
+
+    def build(self, input_shape):
+        self.cls_token = self.add_weight(
+            name='cls_token',
+            shape=(1, 1, self.embed_dim),
+            initializer='glorot_uniform',
+            trainable=True,
+        )
+        super().build(input_shape)
+
+    def call(self, inputs):
+        batch_size = tf.shape(inputs)[0]
+        cls_broadcast = tf.repeat(self.cls_token, batch_size, axis=0)
+        return tf.concat([cls_broadcast, inputs], axis=1)
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update({'embed_dim': self.embed_dim})
         return cfg
 
 
@@ -149,6 +204,7 @@ class AutoencoderTransformer:
             tokens.append(tok)
 
         x = keras.layers.Concatenate(axis=1, name='token_concat')(tokens)
+        x = CLSToken(self.embed_dim, name='cls_token')(x)
         x = keras.layers.LayerNormalization(epsilon=1e-6)(x)
         x = keras.layers.Dropout(self.dropout)(x)
 
@@ -166,7 +222,7 @@ class AutoencoderTransformer:
         if self.continuous_indices:
             cont_tokens = []
             for idx in self.continuous_indices:
-                ti = TokenSlice(idx, keepdims=True, name=f'cont_token_{idx}')(encoded_tokens)
+                ti = TokenSlice(idx + 1, keepdims=True, name=f'cont_token_{idx}')(encoded_tokens)
                 cont_tokens.append(ti)
             cont_seq = keras.layers.Concatenate(axis=1)(cont_tokens) if len(cont_tokens) > 1 else cont_tokens[0]
             cont_out = keras.layers.Dense(1, activation='linear')(cont_seq)
@@ -176,7 +232,7 @@ class AutoencoderTransformer:
         if self.categorical_indices:
             for cat_idx in self.categorical_indices:
                 n_classes = int(self.categorical_cardinalities.get(cat_idx, 2))
-                ti = TokenSlice(cat_idx, keepdims=False, name=f'cat_token_{cat_idx}')(encoded_tokens)
+                ti = TokenSlice(cat_idx + 1, keepdims=False, name=f'cat_token_{cat_idx}')(encoded_tokens)
                 cat_out = keras.layers.Dense(n_classes, activation='softmax', name=f'categorical_{cat_idx}_reconstruction')(ti)
                 outputs.append(cat_out)
 
@@ -257,12 +313,20 @@ class AutoencoderTransformer:
         X_pretrain = np.vstack([train_array, val_array])
         self._ensure_built(X_pretrain)
 
-        X_masked, _ = self.create_masked_data(X_pretrain)
-        y_targets = self.prepare_targets(X_pretrain)
+        n_total = len(X_pretrain)
+        n_val = max(1, int(0.2 * n_total))
+        indices = np.random.permutation(n_total)
+        X_val = X_pretrain[indices[:n_val]]
+        X_train = X_pretrain[indices[n_val:]]
+
+        train_seq = MaskedDataSequence(X_train, self, batch_size, shuffle=True)
+
+        X_val_masked, _ = self.create_masked_data(X_val)
+        y_val_targets = self.prepare_targets(X_val)
 
         early_stopping = keras.callbacks.EarlyStopping(
             monitor='val_loss',
-            patience=10,
+            patience=15,
             restore_best_weights=True,
             verbose=0,
         )
@@ -270,17 +334,15 @@ class AutoencoderTransformer:
         reduce_lr = keras.callbacks.ReduceLROnPlateau(
             monitor='val_loss',
             factor=0.5,
-            patience=10,
+            patience=5,
             min_lr=1e-6,
             verbose=0,
         )
 
         history = self.model.fit(
-            X_masked,
-            y_targets,
+            train_seq,
             epochs=epochs,
-            batch_size=batch_size,
-            validation_split=0.2,
+            validation_data=(X_val_masked, y_val_targets),
             callbacks=[early_stopping, reduce_lr],
             verbose=verbose,
         )

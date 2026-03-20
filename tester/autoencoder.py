@@ -4,6 +4,34 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+class MaskedDataSequence(keras.utils.Sequence):
+    def __init__(self, data_array, autoencoder, batch_size, shuffle=True):
+        self.data_array = data_array.copy()
+        self.autoencoder = autoencoder
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.indices = np.arange(len(data_array))
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+
+    def __len__(self):
+        return int(np.ceil(len(self.data_array) / self.batch_size))
+
+    def __getitem__(self, idx):
+        start = idx * self.batch_size
+        end = min(start + self.batch_size, len(self.indices))
+        batch_indices = self.indices[start:end]
+        batch_data = self.data_array[batch_indices]
+
+        masked_batch, _ = self.autoencoder.create_masked_data(batch_data)
+        targets = self.autoencoder.prepare_targets(batch_data)
+
+        return masked_batch, targets
+
+    def on_epoch_end(self):
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+
 class Autoencoder:
     def __init__(
         self, 
@@ -201,12 +229,10 @@ class Autoencoder:
                 col = X_pretrain[:, cat_idx].astype(float)
                 self.categorical_offsets[cat_idx] = int(np.nanmin(col))
         
-        X_masked, mask = self.create_masked_data(X_pretrain)
-        
-        y_targets = self.prepare_targets(X_pretrain)
+        y_targets_diag = self.prepare_targets(X_pretrain)
         
         if self.continuous_indices:
-            print(f"  - Continuous: shape {y_targets[0].shape}")
+            print(f"  - Continuous: shape {y_targets_diag[0].shape}")
         if self.categorical_indices:
             for i, cat_idx in enumerate(self.categorical_indices):
                 offset = 1 if self.continuous_indices else 0
@@ -214,12 +240,23 @@ class Autoencoder:
                 orig_min = int(np.nanmin(raw_col))
                 orig_max = int(np.nanmax(raw_col))
                 used_offset = self.categorical_offsets.get(cat_idx)
-                encoded_unique = np.unique(y_targets[offset + i])
+                encoded_unique = np.unique(y_targets_diag[offset + i])
                 print(
-                    f"  - Categorical {cat_idx}: shape {y_targets[offset + i].shape}, "
+                    f"  - Categorical {cat_idx}: shape {y_targets_diag[offset + i].shape}, "
                     f"unique classes (0-based) {encoded_unique} (orig [{orig_min}, {orig_max}], offset={used_offset})"
                 )
         
+        n_total = len(X_pretrain)
+        n_val = max(1, int(0.2 * n_total))
+        indices = np.random.permutation(n_total)
+        X_val_split = X_pretrain[indices[:n_val]]
+        X_train_split = X_pretrain[indices[n_val:]]
+
+        train_seq = MaskedDataSequence(X_train_split, self, batch_size, shuffle=True)
+
+        X_val_masked, _ = self.create_masked_data(X_val_split)
+        y_val_targets = self.prepare_targets(X_val_split)
+
         # callbacks
         early_stopping = keras.callbacks.EarlyStopping(
             monitor='val_loss',
@@ -237,11 +274,9 @@ class Autoencoder:
         )
         
         history = self.model.fit(
-            X_masked,
-            y_targets,
+            train_seq,
             epochs=epochs,
-            batch_size=batch_size,
-            validation_split=0.2,
+            validation_data=(X_val_masked, y_val_targets),
             callbacks=[early_stopping, reduce_lr],
             verbose=verbose
         )

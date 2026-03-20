@@ -20,7 +20,7 @@ def sample_hidden_layers(trial, *, prefix='', max_layers=3, first_layer_choices=
     if first_layer_choices is None:
         first_layer_choices = [4, 8, 16, 32, 64]
 
-    n_layers = trial.suggest_int(f'{prefix}n_layers', 1, max_layers)
+    n_layers = trial.suggest_int(f'{prefix}n_layers', 2, max_layers)
     layer_1 = trial.suggest_categorical(f'{prefix}layer_1', first_layer_choices)
     layers = [int(layer_1)]
 
@@ -101,6 +101,21 @@ def set_global_seed(seed):
         tf.random.set_seed(seed)
 
 
+class OptunaPruningCallback(tf.keras.callbacks.Callback):
+    def __init__(self, trial, monitor='val_f1_macro'):
+        super().__init__()
+        self.trial = trial
+        self.monitor = monitor
+
+    def on_epoch_end(self, epoch, logs=None):
+        current = (logs or {}).get(self.monitor)
+        if current is None:
+            return
+        self.trial.report(float(current), epoch)
+        if self.trial.should_prune():
+            raise optuna.TrialPruned()
+
+
 def get_categorical_info(dataset_base_folder):
     if dataset_base_folder == 'age':
         return [0, 1], {0: 4, 1: 2}
@@ -123,14 +138,13 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
         mlp = MLP(shape=dataset_target.get_shape(), layers=hidden_layers, dropout_rate=dropout_rates)
         mlp.compile(learning_rate=learning_rate, weight_decay=weight_decay)
         class_weight = compute_class_weight(dataset_target.target_train.values)
-        mlp.train(dataset_target, epochs=epochs, batch_size=batch_size, verbose=0, plot_path=None, class_weight=class_weight)
+
+        pruning_callback = OptunaPruningCallback(trial, monitor='val_f1_macro')
+        mlp.train(dataset_target, epochs=epochs, batch_size=batch_size, verbose=0, plot_path=None, class_weight=class_weight, extra_callbacks=[pruning_callback])
 
         y_val_true = dataset_target.target_validation.values
         y_val_proba = mlp.model.predict(dataset_target.features_validation, verbose=0).flatten()
         _, val_f1 = find_best_threshold(y_val_true, y_val_proba)
-        
-        if trial.should_prune():
-            raise optuna.TrialPruned()
         
         return val_f1
 
@@ -139,11 +153,11 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
     pretrain_hidden_units = sample_hidden_layers(trial, prefix='ae_', max_layers=5, min_neurons=16, first_layer_choices=[8, 16, 32, 64, 128])
     
     pretrain_mask_ratio = trial.suggest_float('mask_ratio', 0.1, 0.5)
-    pretrain_lr = trial.suggest_float('pretrain_lr', 1e-4, 1e-2, log=True)
+    pretrain_lr = trial.suggest_float('pretrain_lr', 1e-7, 1e-2, log=True)
     pretrain_batch_size = trial.suggest_categorical('pretrain_batch_size', [4, 8, 16, 32, 64])
-    pretrain_epochs = trial.suggest_int('pretrain_epochs', 50, 300, step=50)
-    pretrain_dropout_rate = trial.suggest_float('ae_dropout_rate', 0.1, 0.5)
-    pretrain_l2_reg = trial.suggest_float('l2_reg', 1e-5, 1e-2, log=True)
+    pretrain_epochs = trial.suggest_int('pretrain_epochs', 50, 1000, step=50)
+    pretrain_dropout_rate = trial.suggest_float('ae_dropout_rate', 0.0, 0.5)
+    pretrain_l2_reg = trial.suggest_float('l2_reg', 1e-7, 1e-2, log=True)
     
     autoencoder = Autoencoder(
         shape=dataset_source.get_shape(),
@@ -159,6 +173,7 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
 
     autoencoder.train(dataset_source, epochs=pretrain_epochs, batch_size=pretrain_batch_size, verbose=0)
 
+    ft_weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
     ft_learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
     ft_batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
     ft_epochs = trial.suggest_int('epochs', 50, 500, step=50)
@@ -166,17 +181,17 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
     mlp = MLP(shape=dataset_target.get_shape(), pretrained_encoder=autoencoder.encoder)
     if training_type == 'unfrozen':
         mlp.unfreeze_encoder(learning_rate=ft_learning_rate)
+        mlp.compile(learning_rate=ft_learning_rate, weight_decay=ft_weight_decay)
     else:
-        mlp.compile(learning_rate=ft_learning_rate)
+        mlp.compile(learning_rate=ft_learning_rate, weight_decay=ft_weight_decay)
     class_weight = compute_class_weight(dataset_target.target_train.values)
-    mlp.train(dataset_target, epochs=ft_epochs, batch_size=ft_batch_size, verbose=0, plot_path=None, class_weight=class_weight)
+
+    pruning_callback = OptunaPruningCallback(trial, monitor='val_f1_macro')
+    mlp.train(dataset_target, epochs=ft_epochs, batch_size=ft_batch_size, verbose=0, plot_path=None, class_weight=class_weight, extra_callbacks=[pruning_callback])
 
     y_val_true = dataset_target.target_validation.values
     y_val_proba = mlp.model.predict(dataset_target.features_validation, verbose=0).flatten()
     _, val_f1 = find_best_threshold(y_val_true, y_val_proba)
-    
-    if trial.should_prune():
-        raise optuna.TrialPruned()
 
     return val_f1
 
@@ -321,8 +336,9 @@ def train_and_evaluate(study, dataset_source, dataset_target, training_type, dat
             mlp = MLP(shape=dataset_target.get_shape(), pretrained_encoder=autoencoder.encoder)
             if training_type == 'unfrozen':
                 mlp.unfreeze_encoder(learning_rate=best_params['learning_rate'])
+                mlp.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
             else:
-                mlp.compile(learning_rate=best_params['learning_rate'])
+                mlp.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
             
             mlp.train(
                 dataset_target,

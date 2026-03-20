@@ -200,7 +200,8 @@ class MLP:
         batch_size=32,
         verbose=0,
         plot_path=None,
-        class_weight=None
+        class_weight=None,
+        extra_callbacks=None
     ):
         early_stopping = EarlyStopping(
             monitor='val_auc',
@@ -216,6 +217,10 @@ class MLP:
 
         restore_best_f1 = RestoreBestF1()
 
+        callbacks = [macro_f1_callback, early_stopping, restore_best_f1]
+        if extra_callbacks:
+            callbacks.extend(extra_callbacks)
+
         y_train = dataset.target_train.astype('float32')
         y_val = dataset.target_validation.astype('float32')
 
@@ -224,7 +229,7 @@ class MLP:
             y_train,
             epochs=epochs, 
             validation_data=(dataset.features_validation, y_val),
-            callbacks=[macro_f1_callback, early_stopping, restore_best_f1],
+            callbacks=callbacks,
             batch_size=batch_size,
             verbose=verbose,
             class_weight=class_weight
@@ -237,7 +242,6 @@ class MLP:
         actual_epochs = len(history.history['loss'])
         print(f"\nTreinamento interrompido na época: {actual_epochs}")
 
-        # Extrai valores escalares (alguns podem vir como arrays)
         def extract_value(v):
             return v.item() if hasattr(v, 'item') else (v[0] if isinstance(v, (list, np.ndarray)) else v)
         
