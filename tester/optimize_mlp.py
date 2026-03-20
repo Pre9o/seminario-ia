@@ -91,6 +91,7 @@ def find_best_threshold(y_true, y_proba):
     return best_threshold, best_score
 
 
+<<<<<<< HEAD
 def set_global_seed(seed):
     seed = int(seed)
     random.seed(seed)
@@ -116,6 +117,8 @@ class OptunaPruningCallback(tf.keras.callbacks.Callback):
             raise optuna.TrialPruned()
 
 
+=======
+>>>>>>> 13db5a71f4157b0ed7883b066cd7cf44c7628807
 def get_categorical_info(dataset_base_folder):
     if dataset_base_folder == 'age':
         return [0, 1], {0: 4, 1: 2}
@@ -131,7 +134,7 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
         weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
         hidden_layers = sample_hidden_layers(trial, max_layers=3, min_neurons=2, first_layer_choices=[4, 8, 16, 32])
         dropout_rates = sample_dropout_rates(trial, len(hidden_layers), min_rate=0.0, max_rate=0.5, step=0.1)
-        learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
+        learning_rate = trial.suggest_float('learning_rate', 1e-7, 1e-2, log=True)
         batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
         epochs = trial.suggest_int('epochs', 50, 1000, step=50)
         
@@ -150,7 +153,7 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
 
     categorical_indices, categorical_cardinalities = get_categorical_info(dataset_base_folder)
 
-    pretrain_hidden_units = sample_hidden_layers(trial, prefix='ae_', max_layers=5, min_neurons=16, first_layer_choices=[8, 16, 32, 64, 128])
+    pretrain_hidden_units = sample_hidden_layers(trial, prefix='ae_', max_layers=5, min_neurons=4, first_layer_choices=[8, 16, 32, 64])
     
     pretrain_mask_ratio = trial.suggest_float('mask_ratio', 0.1, 0.5)
     pretrain_lr = trial.suggest_float('pretrain_lr', 1e-7, 1e-2, log=True)
@@ -173,17 +176,26 @@ def objective(trial, dataset_source, dataset_target, training_type, dataset_base
 
     autoencoder.train(dataset_source, epochs=pretrain_epochs, batch_size=pretrain_batch_size, verbose=0)
 
+<<<<<<< HEAD
     ft_weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
     ft_learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
+=======
+    weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
+    ft_learning_rate = trial.suggest_float('learning_rate', 1e-9, 1e-2, log=True)
+>>>>>>> 13db5a71f4157b0ed7883b066cd7cf44c7628807
     ft_batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64])
-    ft_epochs = trial.suggest_int('epochs', 50, 500, step=50)
+    ft_epochs = trial.suggest_int('epochs', 50, 1000, step=50)
     
     mlp = MLP(shape=dataset_target.get_shape(), pretrained_encoder=autoencoder.encoder)
     if training_type == 'unfrozen':
         mlp.unfreeze_encoder(learning_rate=ft_learning_rate)
         mlp.compile(learning_rate=ft_learning_rate, weight_decay=ft_weight_decay)
     else:
+<<<<<<< HEAD
         mlp.compile(learning_rate=ft_learning_rate, weight_decay=ft_weight_decay)
+=======
+        mlp.compile(learning_rate=ft_learning_rate, weight_decay=weight_decay)
+>>>>>>> 13db5a71f4157b0ed7883b066cd7cf44c7628807
     class_weight = compute_class_weight(dataset_target.target_train.values)
 
     pruning_callback = OptunaPruningCallback(trial, monitor='val_f1_macro')
@@ -286,8 +298,6 @@ def train_and_evaluate(study, dataset_source, dataset_target, training_type, dat
     categorical_indices, categorical_cardinalities = get_categorical_info(dataset_base_folder)
 
     for run_idx in range(n_runs):
-        set_global_seed(run_idx)
-
         if training_type == 'baseline':
             hidden_layers = build_hidden_layers_from_params(best_params, min_neurons=2)
             dropout_rates = build_dropout_rates_from_params(best_params, len(hidden_layers), default_rate=0.0)
@@ -335,8 +345,12 @@ def train_and_evaluate(study, dataset_source, dataset_target, training_type, dat
 
             mlp = MLP(shape=dataset_target.get_shape(), pretrained_encoder=autoencoder.encoder)
             if training_type == 'unfrozen':
+<<<<<<< HEAD
                 mlp.unfreeze_encoder(learning_rate=best_params['learning_rate'])
                 mlp.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
+=======
+                mlp.unfreeze_encoder(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
+>>>>>>> 13db5a71f4157b0ed7883b066cd7cf44c7628807
             else:
                 mlp.compile(learning_rate=best_params['learning_rate'], weight_decay=best_params['weight_decay'])
             
